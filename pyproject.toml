@@ -54,6 +54,9 @@ zep = [
     "zep-cloud>=2.0",
 ]
 
+[project.scripts]
+worldfork = "backend.cli:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["backend/app"]
 

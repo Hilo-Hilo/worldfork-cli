@@ -1,6 +1,6 @@
 # WorldFork
 
-WorldFork is an explainable, recursively branching social-simulation platform. A user creates a root scenario called a **Big Bang**, and the system initializes a structured simulated society made of population archetypes, dynamic cohort states, hero agents, news/media channels, social-media feeds, event queues, and sociology rules. The simulation advances in configurable ticks. At each tick, cohort and hero agents see only the information visible to them, decide what to say or do through structured tool calls, and update the simulated social world. At meaningful decision points, a **God-agent** can create alternate timelines — every timeline can branch again, forming a recursive tree of possible futures. The full system includes a Python backend with async job queues, provider abstraction (OpenRouter default), rate-limit-aware branching scheduler, source-of-truth taxonomies, sociology update layer, recursive branch engine, optional Zep memory integration, and polished Next.js UI.
+WorldFork is an explainable, recursively branching social-simulation platform with a backend API and CLI interface. A user creates a root scenario called a **Big Bang**, and the system initializes a structured simulated society with dynamic cohort states, hero agents, news/media channels, social-media feeds, event queues, and sociology rules. The simulation advances in configurable ticks, and branching points can recursively fork into multiverses via the God-agent.
 
 ## Quickstart
 
@@ -12,32 +12,38 @@ make build
 make up
 make migrate
 make seed
+make cli ARGS="status"
 ```
 
 | Service | URL |
 |---------|-----|
 | API | http://localhost:8003 |
 | API docs | http://localhost:8003/docs |
-| Web | http://localhost:3003 |
 
-## Frontend Dev Commands
+## CLI usage
 
 ```bash
-cd apps/web
-
-# Start the Next.js dev server (port 3003)
-pnpm dev --port 3003
-
-# Generate typed API client from the FastAPI OpenAPI schema
-# (requires the backend to be running at http://localhost:8003)
-pnpm codegen:api
-
-# Type check
-pnpm typecheck
-
-# Lint
-pnpm lint
+python -m backend.cli --help
+make cli ARGS="bigbang list"
+make cli ARGS="bigbang create \"Cold war 2026\" --scenario-text \"simulate...\""
+make cli ARGS="jobs list --limit 10"
+make cli ARGS="multiverse dag <big_bang_uuid>"
+make cli ARGS="troubleshoot --include-jobs"
 ```
+
+## Docker profiles
+
+The `cli` service is optional and can be launched from compose when you want a one-off
+containerized CLI run:
+
+```bash
+docker compose --profile cli run --rm cli status
+```
+
+## Claude skill
+
+The backend branch includes [`skill.md`](./skill.md) with action verbs and usage
+notes for Claude-style automation integrations.
 
 ## Reference
 

@@ -57,6 +57,12 @@ def execute_job(db: Session, job: models.Job, *, commit_running: bool = False) -
         raise JobNotRunnableError(
             f"job {job.id} is {job.status}; only queued or expired running jobs can run"
         )
+    if job.job_type == "run_big_bang_until_complete":
+        job.result = {
+            **(job.result or {}),
+            "phase": "claimed",
+            "progress": {"percent": 0},
+        }
     if commit_running:
         db.commit()
         db.refresh(job)
@@ -71,7 +77,10 @@ def execute_job(db: Session, job: models.Job, *, commit_running: bool = False) -
         job.error = None
         job.status = "succeeded"
     except Exception as exc:
-        job.result = {}
+        if isinstance(job.result, dict) and job.result:
+            job.result = {**job.result, "stopped_reason": "failed", "error": str(exc)}
+        else:
+            job.result = {}
         job.error = str(exc)
         job.status = "failed"
     db.flush()
@@ -212,15 +221,18 @@ def _execute_run_big_bang_until_complete_job(db: Session, job: models.Job) -> di
     latest_tick_label: str | None = None
     stopped_reason: str | None = None
 
-    def make_progress(stopped: str | None = None) -> dict:
+    def make_progress(stopped: str | None = None, phase: str = "running", current_multiverse=None) -> dict:
         multiverse_count = db.scalar(
             select(func.count(models.Multiverse.id)).where(models.Multiverse.big_bang_id == big_bang.id)
         )
         return {
             "big_bang_id": str(big_bang.id),
+            "phase": phase,
             "ticks_run": len(tick_ids),
             "latest_tick_id": latest_tick_id,
             "latest_tick_label": latest_tick_label,
+            "current_multiverse_id": str(current_multiverse.id) if current_multiverse is not None else None,
+            "current_multiverse_label": current_multiverse.ui_label if current_multiverse is not None else None,
             "multiverse_count": int(multiverse_count or 0),
             "stopped_reason": stopped,
             "progress": {
@@ -229,6 +241,11 @@ def _execute_run_big_bang_until_complete_job(db: Session, job: models.Job) -> di
                 "percent": min(100, round((len(tick_ids) / max_total_ticks) * 100, 2)),
             },
         }
+
+    job.result = make_progress(phase="starting")
+    db.add(job)
+    db.flush()
+    db.commit()
 
     for _ in range(max_total_ticks):
         active_multiverses = db.scalars(
@@ -245,6 +262,10 @@ def _execute_run_big_bang_until_complete_job(db: Session, job: models.Job) -> di
 
         made_progress = False
         for multiverse in active_multiverses:
+            job.result = make_progress(phase="running_tick", current_multiverse=multiverse)
+            db.add(job)
+            db.flush()
+            db.commit()
             tick = run_next_tick(db, multiverse=multiverse)
             if tick.status in UNFINISHED_TICK_STATUSES:
                 continue
@@ -253,9 +274,9 @@ def _execute_run_big_bang_until_complete_job(db: Session, job: models.Job) -> di
                 continue
             tick_ids.append(tick_id)
             latest_tick_id = tick_id
-            latest_tick_label = tick.label
+            latest_tick_label = tick.ui_label
             made_progress = True
-            job.result = make_progress()
+            job.result = make_progress(phase="tick_committed", current_multiverse=multiverse)
             db.add(job)
             db.flush()
             db.commit()
@@ -270,9 +291,9 @@ def _execute_run_big_bang_until_complete_job(db: Session, job: models.Job) -> di
         .order_by(models.Multiverse.created_at.asc())
     ).all()
     unfinished_ticks = db.scalar(
-        select(func.count(models.Tick.id)).where(
-            models.Tick.big_bang_id == big_bang.id,
-            models.Tick.status.in_(UNFINISHED_TICK_STATUSES),
+        select(func.count(models.TickSnapshot.id)).where(
+            models.TickSnapshot.big_bang_id == big_bang.id,
+            models.TickSnapshot.status.in_(UNFINISHED_TICK_STATUSES),
         )
     )
     non_terminal = [mv for mv in multiverses if mv.status not in TERMINAL_MULTIVERSE_STATUSES]

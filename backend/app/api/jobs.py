@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -29,8 +29,20 @@ def types():
 
 
 @router.get("")
-def list_jobs(db: Session = Depends(get_db)):
-    return db.scalars(select(models.Job).order_by(models.Job.created_at.desc()).limit(100)).all()
+def list_jobs(
+    big_bang_id: UUID | None = None,
+    limit: int = Query(default=100, ge=1, le=250),
+    db: Session = Depends(get_db),
+):
+    query = select(models.Job).order_by(models.Job.created_at.desc()).limit(limit)
+    if big_bang_id is not None:
+        query = (
+            select(models.Job)
+            .where(models.Job.big_bang_id == big_bang_id)
+            .order_by(models.Job.created_at.desc())
+            .limit(limit)
+        )
+    return db.scalars(query).all()
 
 
 @router.post("")
@@ -51,8 +63,8 @@ def create_job_record(payload: JobCreate, db: Session, background_tasks: Backgro
     )
     existing = db.scalar(select(models.Job).where(models.Job.idempotency_key == key))
     if existing:
-        if not enqueue_recoverable_job(db, existing):
-            schedule_local_fallback(background_tasks, existing.id)
+        enqueue_recoverable_job(db, existing)
+        schedule_local_fallback(background_tasks, existing.id)
         return existing
     job = models.Job(
         job_type=payload.job_type,
@@ -75,8 +87,8 @@ def create_job_record(payload: JobCreate, db: Session, background_tasks: Backgro
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=500, detail="could not create job") from exc
-    if not enqueue_recoverable_job(db, job, force=True):
-        schedule_local_fallback(background_tasks, job.id)
+    enqueue_recoverable_job(db, job, force=True)
+    schedule_local_fallback(background_tasks, job.id)
     return job
 
 

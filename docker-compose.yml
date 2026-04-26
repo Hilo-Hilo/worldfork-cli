@@ -132,17 +132,23 @@ services:
       - ./runs:/data/runs
     command: celery -A backend.app.workers.celery_app beat --loglevel=INFO
 
-  web:
+  cli:
+    profiles: ["cli"]
     build:
       context: .
-      dockerfile: infra/docker/web.Dockerfile
+      dockerfile: infra/docker/api.Dockerfile
     env_file: .env
-    ports:
-      - "3003:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python -m backend.cli --help
     volumes:
-      - ./apps/web:/app
-      - /app/node_modules
-    command: pnpm dev
+      - ./backend:/app/backend
+      - ./source_of_truth:/app/source_of_truth
+      - ./infra:/app/infra
+      - ./runs:/data/runs
 
 volumes:
   pg_data:

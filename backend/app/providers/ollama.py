@@ -30,7 +30,7 @@ class OllamaProvider(OpenRouterProvider):
             base_url=base_url,
             default_model=default_model,
             fallback_model=fallback_model,
-            http_referer="http://localhost:3003",
+            http_referer="http://localhost:8003",
             x_title="WorldFork",
             request_timeout=request_timeout,
         )
