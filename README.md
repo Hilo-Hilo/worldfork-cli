@@ -25,6 +25,33 @@ After install you have a `worldfork` console script:
 worldfork --help
 ```
 
+## Use with a coding agent (Claude Code, Codex)
+
+This repo ships [`skill.md`](./skill.md) — an agent-facing manifest that documents the root command, the discovery flow, the verbosity knobs, and the failure modes. Drop it into your agent's skills directory so it's loaded automatically whenever you ask the agent to drive the CLI.
+
+**Claude Code (one-liner — paste this into your shell):**
+
+```bash
+mkdir -p ~/.claude/skills/worldfork-cli && \
+  curl -fsSL https://raw.githubusercontent.com/Hilo-Hilo/worldfork-cli/main/skill.md \
+  -o ~/.claude/skills/worldfork-cli/SKILL.md && \
+  echo "Installed → ~/.claude/skills/worldfork-cli/SKILL.md"
+```
+
+Project-local instead of global? Replace `~/.claude/skills/...` with `.claude/skills/...` (relative to your project root). Re-run the command any time you want to refresh the skill from the repo.
+
+**Codex (and other agents using the AGENTS.md convention):**
+
+[`AGENTS.md`](./AGENTS.md) is checked in at the repo root and Codex picks it up automatically. To make it global, paste it into `~/.codex/AGENTS.md` (or your agent's equivalent):
+
+```bash
+mkdir -p ~/.codex && \
+  curl -fsSL https://raw.githubusercontent.com/Hilo-Hilo/worldfork-cli/main/AGENTS.md \
+  -o ~/.codex/AGENTS.md
+```
+
+Both files point at the same canonical content in `skill.md`, so updating that one file refreshes both surfaces on the next install.
+
 ## Configure
 
 The CLI reads two env vars at startup:
