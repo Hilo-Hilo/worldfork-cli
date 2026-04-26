@@ -15,12 +15,17 @@ from worldfork.client import WorldForkClient
 from worldfork.output import (
     emit,
     format_run_status,
+    parse_fields,
     parse_json_text,
     print_table,
+    project,
+    project_list,
     read_json_file,
     read_stdin_text,
+    resolve_verbosity_keys,
     safe_json_dump,
     short_id,
+    truncate,
 )
 
 # ---------------------------------------------------------------------------
@@ -481,13 +486,160 @@ def universe_force_deviation(args: argparse.Namespace, client: WorldForkClient) 
     emit(args, response)
 
 
-def universe_trace(args: argparse.Namespace, client: WorldForkClient) -> None:
-    response = client.request(
+def _fetch_universe_trace(
+    client: WorldForkClient,
+    universe_id: str,
+    tick: int,
+    include_raw: bool,
+) -> dict[str, Any]:
+    """Fetch the raw trace payload. Shared between trace, actors, and cohort transcript."""
+    return client.request(
         "GET",
-        f"/universes/{args.universe_id}/ticks/{args.tick}/trace",
-        params={"include_raw": args.include_raw},
+        f"/universes/{universe_id}/ticks/{tick}/trace",
+        params={"include_raw": include_raw},
     )
-    emit(args, response)
+
+
+def _filter_trace_actors(
+    actors: list[dict[str, Any]],
+    actor_id: str | None = None,
+    actor_kind: str | None = None,
+) -> list[dict[str, Any]]:
+    out = actors
+    if actor_id:
+        out = [a for a in out if a.get("actor_id") == actor_id]
+    if actor_kind:
+        out = [a for a in out if a.get("actor_kind") == actor_kind]
+    return out
+
+
+def universe_trace(args: argparse.Namespace, client: WorldForkClient) -> None:
+    response = _fetch_universe_trace(
+        client, args.universe_id, args.tick, args.include_raw
+    )
+    if not isinstance(response, dict):
+        emit(args, response)
+        return
+
+    actors = response.get("actors", []) or []
+    actors = _filter_trace_actors(actors, args.actor_id, args.actor_kind)
+
+    actor_fields = parse_fields(args.fields)
+    actor_keys = resolve_verbosity_keys("universe_trace_actor", args.verbosity, actor_fields)
+    projected_actors = project_list(actors, actor_keys)
+
+    # Build envelope. In summary mode we replace the actors array with a count.
+    envelope_keys = resolve_verbosity_keys("universe_trace_envelope", args.verbosity, None)
+    envelope = dict(response)
+    envelope["actors"] = projected_actors
+    if args.verbosity == "summary":
+        envelope["actor_count"] = len(projected_actors)
+    if args.verbosity == "normal" and isinstance(envelope.get("god_decision"), str):
+        envelope["god_decision"] = truncate(envelope["god_decision"], 200)
+
+    emit(args, project(envelope, envelope_keys))
+
+
+def universe_actors(args: argparse.Namespace, client: WorldForkClient) -> None:
+    """Discovery: list every actor in a universe at a given tick.
+
+    Implementation: fetch the tick trace, project each actor to a small
+    identifier-only shape. Fully client-side; no dedicated server endpoint.
+    """
+    response = _fetch_universe_trace(
+        client, args.universe_id, args.tick, include_raw=False
+    )
+    if not isinstance(response, dict):
+        emit(args, response)
+        return
+
+    actors = response.get("actors", []) or []
+    rows = [
+        {
+            "actor_id": str(a.get("actor_id", "")),
+            "actor_kind": str(a.get("actor_kind", "")),
+            "job_type": str(a.get("job_type", "")),
+        }
+        for a in actors
+    ]
+    if args.json:
+        emit(args, rows)
+        return
+    if not rows:
+        print(f"No actors found in {args.universe_id} at tick {args.tick}.")
+        return
+    print(f"Actors in {args.universe_id} at tick {args.tick}: {len(rows)}")
+    print_table(rows, ["actor_id", "actor_kind", "job_type"])
+
+
+def cohort_transcript(args: argparse.Namespace, client: WorldForkClient) -> None:
+    """Walk one cohort's row across a tick range, applying verbosity/fields.
+
+    No server endpoint exposes "give me one cohort across N ticks" — we
+    iterate ``universe trace`` calls and stitch the matching actor row from
+    each. For long ranges this is N HTTP calls. Use ``--from-tick``/``--to-tick``
+    to bound it.
+    """
+    if args.from_tick > args.to_tick:
+        raise RuntimeError(
+            f"--from-tick ({args.from_tick}) must be <= --to-tick ({args.to_tick})"
+        )
+
+    field_override = parse_fields(args.fields)
+    keys = resolve_verbosity_keys("cohort_transcript_row", args.verbosity, field_override)
+
+    rows: list[dict[str, Any]] = []
+    for tick in range(args.from_tick, args.to_tick + 1):
+        trace = _fetch_universe_trace(
+            client, args.universe_id, tick, args.include_raw
+        )
+        if not isinstance(trace, dict):
+            continue
+        match = next(
+            (
+                a
+                for a in trace.get("actors", []) or []
+                if a.get("actor_id") == args.cohort_id
+            ),
+            None,
+        )
+        if match is None:
+            rows.append({"tick": tick, "missing": True})
+            continue
+        # Always include tick; project the rest per verbosity/fields.
+        projected = project(match, keys) if keys is not None else dict(match)
+        projected = {"tick": tick, **projected}
+        rows.append(projected)
+
+    if args.json:
+        emit(args, rows)
+        return
+
+    if not rows:
+        print("No ticks in range.")
+        return
+
+    # Pick stable display columns from the first non-missing row.
+    sample = next((r for r in rows if "missing" not in r), rows[0])
+    columns = [k for k in sample.keys() if k != "missing"]
+    if "tick" not in columns:
+        columns.insert(0, "tick")
+    # Stringify nested fields so they render in the table.
+    flat_rows: list[dict[str, Any]] = []
+    for r in rows:
+        if r.get("missing"):
+            flat_rows.append({"tick": r["tick"], **{c: "(missing)" for c in columns if c != "tick"}})
+            continue
+        flat = {}
+        for c in columns:
+            v = r.get(c, "")
+            flat[c] = v if isinstance(v, (str, int, float)) else safe_json_dump(v).replace("\n", " ")
+        flat_rows.append(flat)
+    print(
+        f"Cohort {args.cohort_id} transcript in {args.universe_id} "
+        f"(ticks {args.from_tick}–{args.to_tick}, verbosity={args.verbosity})"
+    )
+    print_table(flat_rows, columns)
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +654,24 @@ def logs_list(args: argparse.Namespace, client: WorldForkClient, scope: str) -> 
             params[key] = value
 
     response = client.request("GET", f"/logs/{scope}", params=params)
+
+    # Project rows per verbosity / --fields. Skipped entirely if response
+    # isn't a list (e.g. server returned an envelope shape we don't recognize).
+    if isinstance(response, list):
+        field_override = parse_fields(getattr(args, "fields", None))
+        keys = resolve_verbosity_keys(f"logs_{scope}_row", args.verbosity, field_override)
+        if args.verbosity == "summary" and scope == "errors":
+            response = [
+                {**row, "error": truncate(row.get("error", ""), 120)}
+                if isinstance(row, dict)
+                else row
+                for row in response
+            ]
+        response = project_list(
+            [r if isinstance(r, dict) else {"value": r} for r in response],
+            keys,
+        )
+
     if args.json:
         emit(args, response)
         return
@@ -511,11 +681,20 @@ def logs_list(args: argparse.Namespace, client: WorldForkClient, scope: str) -> 
             print("No error logs.")
             return
         for item in response:
+            if not isinstance(item, dict):
+                print(item)
+                continue
             print(
                 f"[{item.get('source', 'error')}] "
                 f"{item.get('status')} {item.get('error')}"
             )
-            print(f"  id: {item.get('id')} | run: {short_id(item.get('run_id', ''))}")
+            extras = []
+            if item.get("id"):
+                extras.append(f"id: {item['id']}")
+            if item.get("run_id"):
+                extras.append(f"run: {short_id(item['run_id'])}")
+            if extras:
+                print("  " + " | ".join(extras))
             print()
         return
 

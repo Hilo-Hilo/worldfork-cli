@@ -13,6 +13,7 @@ from worldfork.client import (
     DEFAULT_TIMEOUT,
     WorldForkClient,
 )
+from worldfork.output import DEFAULT_VERBOSITY, VERBOSITY_TIERS
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,6 +51,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_ENV_FILE,
         help="Env file path used by `set-key` (default: ./.env)",
     )
+    parser.add_argument(
+        "--verbosity",
+        choices=list(VERBOSITY_TIERS),
+        default=DEFAULT_VERBOSITY,
+        help=(
+            "How much detail to keep per record. 'summary' keeps just identifiers, "
+            "'normal' keeps key business fields, 'full' keeps the raw API response. "
+            f"Default: {DEFAULT_VERBOSITY}. Use 'summary' first when exploring."
+        ),
+    )
 
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -62,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runs(sub)
     _add_multiverse(sub)
     _add_universe(sub)
+    _add_cohort(sub)
     _add_jobs(sub)
     _add_logs(sub)
 
@@ -201,11 +213,65 @@ def _add_universe(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--no-auto-start", dest="auto_start", action="store_false")
     p.set_defaults(func=commands.universe_force_deviation)
 
-    p = s.add_parser("trace", help="Pull trace for a universe tick")
+    p = s.add_parser("actors", help="List actors (cohorts/gods/heroes) in a universe")
+    p.add_argument("universe_id")
+    p.add_argument(
+        "--tick",
+        type=int,
+        default=1,
+        help="Tick to inspect actors at (default: 1; cohorts persist across ticks).",
+    )
+    p.set_defaults(func=commands.universe_actors)
+
+    p = s.add_parser(
+        "trace",
+        help="Pull trace for a universe tick (filterable by actor; verbosity-aware)",
+    )
     p.add_argument("universe_id")
     p.add_argument("tick", type=int)
-    p.add_argument("--include-raw", action="store_true")
+    p.add_argument("--include-raw", action="store_true", help="Pass include_raw=true to the API.")
+    p.add_argument(
+        "--actor-id",
+        dest="actor_id",
+        help="Keep only the actor with this id (e.g. coh_…, hero_…, god_…).",
+    )
+    p.add_argument(
+        "--actor-kind",
+        dest="actor_kind",
+        choices=["cohort", "god", "hero"],
+        help="Keep only actors of this kind.",
+    )
+    p.add_argument(
+        "--fields",
+        help=(
+            "Comma-separated top-level keys to keep on each actor "
+            "(overrides --verbosity; e.g. --fields actor_id,rationale,state_delta)."
+        ),
+    )
     p.set_defaults(func=commands.universe_trace)
+
+
+def _add_cohort(sub: argparse._SubParsersAction) -> None:
+    co = sub.add_parser(
+        "cohort",
+        help="Cohort-level views (transcript walks across ticks)",
+    )
+    s = co.add_subparsers(dest="cohort_command", required=True)
+
+    p = s.add_parser(
+        "transcript",
+        help="Walk one cohort's row across a tick range, applying --verbosity/--fields.",
+    )
+    p.add_argument("universe_id")
+    p.add_argument("cohort_id", help="Actor id of the cohort (e.g. coh_…).")
+    p.add_argument("--from-tick", dest="from_tick", type=int, required=True)
+    p.add_argument("--to-tick", dest="to_tick", type=int, required=True)
+    p.add_argument("--include-raw", action="store_true")
+    p.add_argument(
+        "--fields",
+        help="Comma-separated keys to keep per tick (overrides --verbosity).",
+    )
+    p.set_defaults(func=commands.cohort_transcript)
 
 
 def _add_jobs(sub: argparse._SubParsersAction) -> None:
@@ -247,12 +313,14 @@ def _add_logs(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--status")
     p.add_argument("--limit", type=int, default=100)
     p.add_argument("--offset", type=int, default=0)
+    p.add_argument("--fields", help="Comma-separated keys to keep per row (overrides --verbosity).")
     p.set_defaults(func=lambda a, c: commands.logs_list(a, c, "requests"))
 
     p = s.add_parser("errors", help="Error logs")
     p.add_argument("--run-id")
     p.add_argument("--limit", type=int, default=100)
     p.add_argument("--offset", type=int, default=0)
+    p.add_argument("--fields", help="Comma-separated keys to keep per row (overrides --verbosity).")
     p.set_defaults(func=lambda a, c: commands.logs_list(a, c, "errors"))
 
     p = s.add_parser("webhooks", help="Webhook delivery logs")
@@ -260,11 +328,13 @@ def _add_logs(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--status")
     p.add_argument("--limit", type=int, default=100)
     p.add_argument("--offset", type=int, default=0)
+    p.add_argument("--fields", help="Comma-separated keys to keep per row (overrides --verbosity).")
     p.set_defaults(func=lambda a, c: commands.logs_list(a, c, "webhooks"))
 
     p = s.add_parser("audit", help="Audit logs")
     p.add_argument("--limit", type=int, default=100)
     p.add_argument("--offset", type=int, default=0)
+    p.add_argument("--fields", help="Comma-separated keys to keep per row (overrides --verbosity).")
     p.set_defaults(func=lambda a, c: commands.logs_list(a, c, "audit"))
 
     _ = common_filters  # reserved for future shared-arg refactor
