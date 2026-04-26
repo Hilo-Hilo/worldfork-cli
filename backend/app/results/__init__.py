@@ -1,1 +1,0 @@
-"""Run results aggregation package."""

@@ -1,366 +1,163 @@
 # worldfork-cli
 
-Headless backend and text-first CLI for WorldFork — a platform for explainable, recursively branching social simulations. There is no browser frontend in this repo: everything happens through a FastAPI backend, a Docker stack, and `backend.cli`, which coding agents (Claude Code, Codex, local scripts) can drive directly.
+`worldfork` is a small, dependency-light command-line client for a [WorldFork](https://github.com/Hilo-Hilo/WorldFork) backend — a platform for explainable, recursively branching social simulations.
 
-A user creates a root scenario called a **Big Bang**. The backend initializes a simulated society with cohort states, hero agents, media channels, social feeds, event queues, sociology rules, tick progression, God-agent reviews, and multiverse branching. Operators read and steer that state through CLI commands.
+It is **only the client**. There is no FastAPI app, no Docker stack, no Celery workers, and no browser frontend in this repository. You point the CLI at a running backend with `WORLD_FORK_API_BASE` (or `--base-url`) and it does the rest over HTTP.
 
-## What Is Included
+## Install
 
-- FastAPI backend at `http://localhost:8003`
-- PostgreSQL and Redis via Docker Compose
-- Celery workers for background jobs and simulation tasks
-- CLI entry point at `python -m backend.cli`
-- `skill.md` for Claude-style agent integrations
-- Text and JSON outputs for dependency graphs, reports, logs, jobs, and interventions
+```bash
+# Recommended: isolated install via pipx
+pipx install git+https://github.com/Hilo-Hilo/worldfork-cli.git
 
-## Prerequisites
+# Or as a regular pip dependency
+pip install git+https://github.com/Hilo-Hilo/worldfork-cli.git
 
-- Docker Desktop or another Docker Compose compatible runtime
-- Python 3.11+ if you want to run the CLI or tests outside Docker
-- `make`
-- An OpenRouter key for real model-backed runs
+# Or for local development
+git clone https://github.com/Hilo-Hilo/worldfork-cli.git
+cd worldfork-cli
+pip install -e ".[dev]"
+```
 
-The backend can boot without a real provider key, but full simulation workflows that call LLM providers need `OPENROUTER_API_KEY`.
+After install you have a `worldfork` console script:
+
+```bash
+worldfork --help
+```
+
+## Configure
+
+The CLI reads two env vars at startup:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `WORLD_FORK_API_BASE` | Backend root URL (wins over `BACKEND_API_BASE`) | `http://127.0.0.1:8003` |
+| `BACKEND_API_BASE` | Same, kept for compatibility | — |
+
+Override per-invocation with `--base-url`:
+
+```bash
+worldfork --base-url https://worldfork.example.com status
+```
+
+Copy `.env.example` to `.env` if you want a checked-in baseline; the CLI does not read `.env` itself, but `worldfork set-key` writes to it.
 
 ## Quickstart
 
 ```bash
-git clone https://github.com/Hilo-Hilo/worldfork-cli.git
-cd worldfork-cli
-cp .env.example .env
+worldfork status
+worldfork bigbang list
+worldfork --json bigbang list | jq '.[0].id'
+worldfork bigbang create "Cold War 2026" \
+  --scenario-text "A contested election triggers institutional conflict."
+worldfork bigbang run-until-complete <big_bang_id>      # async (default)
+worldfork multiverse dag <big_bang_id>
+worldfork logs errors --limit 20
 ```
 
-Edit `.env` and set at least:
+## Command map
 
-```bash
-OPENROUTER_API_KEY=your_key_here
-ZEP_ENABLED=false
-BACKEND_API_BASE=http://localhost:8003
-```
+All commands accept `--json` for machine-readable output. The top-level flags `--base-url`, `--api-prefix`, `--timeout`, `--json`, and `--env-file` must come **before** the subcommand.
 
-Start the stack:
+### Read-only
 
-```bash
-make build
-make up
-make migrate
-```
-
-Check that the API and CLI can talk:
-
-```bash
-make cli ARGS="status"
-```
-
-API docs are available at:
-
-```text
-http://localhost:8003/docs
-```
-
-## Docker Services
-
-The default Compose stack starts:
-
-| Service | Purpose |
+| Command | What it does |
 | --- | --- |
-| `postgres` | Persistent platform state |
-| `redis` | Broker/cache for jobs and streams |
-| `api` | FastAPI backend on host port `8003` |
-| `worker_p0` to `worker_p3` | Celery workers for priority queues |
-| `beat` | Scheduled background worker |
+| `worldfork status` | `GET /api/health` + `GET /api/big-bangs`, prints a summary table. |
+| `worldfork troubleshoot [--include-jobs] [--limit N] [--run-id X]` | Health + recent error log digest. |
+| `worldfork query GET /path` | Arbitrary backend GET. Supports `--data` / `--payload-file` for write methods. |
+| `worldfork search "<query>" [--limit 6]` | DuckDuckGo HTML search; no backend involvement. |
+| `worldfork bigbang list` | List Big Bangs. |
+| `worldfork bigbang reports <big_bang_id>` | List reports. |
+| `worldfork runs [--status X] [--q text] [--limit N]` | List run metadata. |
+| `worldfork multiverse tree <big_bang_id>` | Raw dependency snapshot. |
+| `worldfork multiverse dag <big_bang_id>` | Rendered DAG with status labels. |
+| `worldfork multiverse metrics <big_bang_id>` | Aggregate multiverse metrics. |
+| `worldfork universe trace <universe_id> <tick> [--include-raw]` | Per-tick actor trace. |
+| `worldfork jobs types` | Registered job types. |
+| `worldfork jobs list [--big-bang-id X] [--limit N]` | Recent jobs. |
+| `worldfork logs requests [--run-id] [--universe-id] [--provider] [--status] [--limit N] [--offset N]` | LLM/provider request logs. |
+| `worldfork logs errors [--run-id] [--limit N] [--offset N]` | Error logs. |
+| `worldfork logs webhooks [--run-id] [--status] [--limit N] [--offset N]` | Webhook delivery logs. |
+| `worldfork logs audit [--limit N] [--offset N]` | Audit logs. |
 
-Useful commands:
+### Mutating
 
-```bash
-make up
-make logs
-make down
-make clean-data
-```
+| Command | What it does |
+| --- | --- |
+| `worldfork set-key KEY VALUE [--env-file .env]` | Rewrite a `KEY=VALUE` line in a local env file. **No API call.** |
+| `worldfork bigbang create NAME [--description] [--scenario-text \| --payload path]` | Create a Big Bang. Reads scenario from stdin if neither flag is set. |
+| `worldfork bigbang start \| pause \| resume <big_bang_id>` | State transitions. |
+| `worldfork bigbang run-until-complete <big_bang_id> [--max-ticks N] [--sync]` | See **Async vs sync** below. |
+| `worldfork bigbang final-report <big_bang_id> [--title] [--summary]` | Generate the final report. |
+| `worldfork multiverse step <big_bang_id>` | Queue one tick across active universes. |
+| `worldfork universe step <universe_id> [--tick N]` | Simulate one tick. |
+| `worldfork universe force-deviation <universe_id> <tick> --mode {god_prompt,structured_delta} [--reason] [--prompt \| --prompt-file] [--delta \| --delta-file] [--no-auto-start]` | Manual operator branch. |
+| `worldfork jobs create <job_type> --payload '{...}' [--big-bang-id] [--idempotency-key]` | Enqueue a job. |
+| `worldfork jobs run <job_id>` | Run a queued job inline. |
 
-Run the CLI inside Docker:
+## Async vs sync
 
-```bash
-docker compose --profile cli run --rm cli status
-docker compose --profile cli run --rm cli jobs list --limit 10
-```
+The CLI itself is **synchronous** — one process, one blocking HTTP request per command.
 
-Run the CLI from the host:
+The backend offloads heavy work to Celery. Most "mutating" commands enqueue a job and return immediately; you follow up with `jobs list`, `logs errors`, or `multiverse metrics` to track progress.
 
-```bash
-make cli ARGS="status"
-PYTHONPATH=. python -m backend.cli --help
-```
-
-## CLI Basics
-
-The CLI defaults to:
-
-```text
-http://127.0.0.1:8003/api
-```
-
-You can override the API root with either:
-
-```bash
-BACKEND_API_BASE=http://localhost:8003
-WORLD_FORK_API_BASE=http://localhost:8003
-```
-
-Use `--json` when another agent or script needs structured output:
+**`bigbang run-until-complete` is async by default.** It enqueues a `run_big_bang_until_complete` job and prints the job id:
 
 ```bash
-make cli ARGS="--json status"
-make cli ARGS="--json jobs list --limit 5"
+$ worldfork bigbang run-until-complete <big_bang_id>
+Queued run_big_bang_until_complete for <big_bang_id>.
+  job_id: <uuid>
+  Track with: worldfork jobs list / logs errors / multiverse metrics
 ```
 
-### Timeouts
-
-The CLI ships with **no HTTP timeout by default** — every command waits as long as the API takes to respond. This matters because some operations (`bigbang run-until-complete --sync`, large `multiverse step` jobs, slow LLM providers) can take many minutes.
-
-Pass `--timeout SECONDS` to cap an individual request:
-
-```bash
-make cli ARGS="--timeout 30 status"
-```
-
-Note: the `--timeout` flag belongs to the top-level CLI, not subcommands. It must come before the subcommand name (`bigbang`, `jobs`, etc.).
-
-## Common Workflows
-
-List current runs:
-
-```bash
-make cli ARGS="bigbang list"
-```
-
-Create a Big Bang from prose:
-
-```bash
-make cli ARGS="bigbang create \"Cold War 2026\" --scenario-text \"A contested election triggers institutional conflict across media, courts, and public coalitions.\""
-```
-
-Create from a JSON payload:
-
-```bash
-make cli ARGS="bigbang create \"Policy Divergence\" --payload examples/payload.json"
-```
-
-Start, pause, resume, or run a Big Bang:
-
-```bash
-make cli ARGS="bigbang start <big_bang_uuid>"
-make cli ARGS="bigbang pause <big_bang_uuid>"
-make cli ARGS="bigbang resume <big_bang_uuid>"
-make cli ARGS="bigbang run-until-complete <big_bang_uuid>"
-```
-
-### `run-until-complete`: async by default
-
-`bigbang run-until-complete` enqueues a `run_big_bang_until_complete` job and returns immediately with a `job_id`. Track it with `jobs list`, `logs errors`, or `multiverse metrics`.
-
-```bash
-make cli ARGS="bigbang run-until-complete <big_bang_uuid> --max-ticks 24"
-# Queued run_big_bang_until_complete for <big_bang_uuid>.
-#   job_id: <uuid>
-#   Track with: jobs list / logs errors / multiverse metrics
-```
-
-Pass `--sync` to block the CLI on the API until the simulation finishes:
-
-```bash
-make cli ARGS="bigbang run-until-complete <big_bang_uuid> --sync --max-ticks 24"
-```
-
-**WARNING.** `--sync` runs the entire simulation in the API request thread. Wall time depends on:
+Pass `--sync` to block the CLI on the API until the simulation finishes. **This will take a long time.** Wall time depends on:
 
 - `--max-ticks` (default 24)
-- `DEFAULT_MODEL` / `FALLBACK_MODEL` set in `.env` — LLM latency dominates
-- active universe count and branching factor
+- the model the backend uses for agent calls (LLM latency dominates)
+- active universe count and branching
 
-Expect tens of minutes to hours for non-trivial scenarios. Combine `--sync` with an explicit cap if you want a hard deadline:
+Expect tens of minutes to hours for non-trivial scenarios. The `--sync` path prints a stderr warning before issuing the request.
 
-```bash
-make cli ARGS="--timeout 7200 bigbang run-until-complete <big_bang_uuid> --sync"
-```
+## Timeouts
 
-Inspect multiverse state:
+There is **no HTTP timeout by default**. Every command waits as long as the API takes. This matters for `--sync`, large `multiverse step` jobs, and slow providers.
 
-```bash
-make cli ARGS="multiverse tree <big_bang_uuid>"
-make cli ARGS="multiverse dag <big_bang_uuid>"
-make cli ARGS="multiverse metrics <big_bang_uuid>"
-```
-
-Advance or steer simulations:
+Cap an individual request with `--timeout SECONDS`:
 
 ```bash
-make cli ARGS="multiverse step <big_bang_uuid>"
-make cli ARGS="universe step <universe_uuid>"
-make cli ARGS="universe force-deviation <universe_uuid> 3 --reason \"Manual operator branch\" --prompt \"Investigate divergent coalition response.\""
-make cli ARGS="universe trace <universe_uuid> 3"
+worldfork --timeout 30 status
+worldfork --timeout 7200 bigbang run-until-complete <id> --sync
 ```
 
-Inspect jobs, logs, and reports:
+## Development
 
 ```bash
-make cli ARGS="jobs types"
-make cli ARGS="jobs list --limit 20"
-make cli ARGS="logs errors --limit 20"
-make cli ARGS="logs requests --limit 20"
-make cli ARGS="bigbang reports <big_bang_uuid>"
-make cli ARGS="bigbang final-report <big_bang_uuid>"
+pip install -e ".[dev]"
+pytest
+ruff check .
 ```
 
-Run troubleshooting summary:
+Project layout:
 
-```bash
-make cli ARGS="troubleshoot --include-jobs"
+```
+src/worldfork/
+  __init__.py     # version
+  __main__.py     # `python -m worldfork`
+  cli.py          # argparse construction + main()
+  client.py       # WorldForkClient (httpx wrapper)
+  commands.py     # all command handlers
+  output.py       # formatting helpers
+tests/
+  test_smoke.py   # parser + arg parsing, no network
 ```
 
-Run web search through the CLI:
+## Backend compatibility
 
-```bash
-make cli ARGS="search \"current AI governance regulatory timeline\""
-```
+`worldfork` assumes the backend exposes a `/health` route at root **and** under the `/api` prefix (`/api/health`). If your deployment only has `/health`, either add an alias or pass `--api-prefix ""` and prefix paths manually with `query`.
 
-Write keys into `.env` without opening an editor:
+The CLI was written against the `cli-backend` branch of the WorldFork repository.
 
-```bash
-make cli ARGS="set-key OPENROUTER_API_KEY your_key_here"
-make cli ARGS="set-key DEFAULT_MODEL deepseek/deepseek-v3.2"
-```
+## License
 
-## Generic API Queries
-
-If the CLI does not yet expose a dedicated command, use `query`:
-
-```bash
-make cli ARGS="query GET /api/big-bangs"
-make cli ARGS="query POST /api/jobs --data '{\"job_type\":\"run_big_bang_until_complete\",\"payload\":{}}'"
-```
-
-Use `/docs` to inspect the current API routes and payload schemas.
-
-## Testing
-
-Fast smoke test after Docker boot:
-
-```bash
-make cli ARGS="status"
-make cli ARGS="jobs list --limit 5"
-make cli ARGS="bigbang list"
-make cli ARGS="troubleshoot --include-jobs"
-```
-
-Containerized test run:
-
-```bash
-make test
-```
-
-Local test tiers, assuming `.venv` exists and dependencies are installed:
-
-```bash
-make test-unit
-make test-integration
-make test-e2e
-make test-all
-```
-
-Lint/type checks:
-
-```bash
-make lint
-```
-
-Recommended first validation for a new contributor:
-
-```bash
-cp .env.example .env
-make build
-make up
-make migrate
-make cli ARGS="status"
-make cli ARGS="jobs types"
-```
-
-## Async vs sync model
-
-- **CLI process**: synchronous. `backend/cli.py` uses `httpx.Client` (not `AsyncClient`). One invocation = one process = one blocking HTTP request.
-- **Server handlers**: mostly synchronous FastAPI endpoints (plain `def`, not `async def`). They block on the SQLAlchemy session for the duration of the request.
-- **Background work**: lives in **Celery**, not the request path. `bigbang start`, `multiverse step`, `universe step`, `jobs create`, and the default `bigbang run-until-complete` all enqueue work to the priority workers (`worker_p0`–`p3`) and return quickly. The CLI does not poll for completion — follow up with `jobs list` / `logs errors` / `multiverse metrics`.
-- **Blocking exception**: `bigbang run-until-complete --sync` is synchronous server-side; the CLI sits on the HTTP connection until the simulation finishes. See the warning above.
-
-## Agent Integration
-
-`skill.md` describes the command vocabulary for Claude Code, Codex, or any agent that can call shell commands. The intended pattern is:
-
-1. Start the Docker backend.
-2. Set provider keys with `backend.cli set-key`.
-3. Use `status`, `troubleshoot`, `jobs`, `logs`, and `query` for situational awareness.
-4. Use `bigbang`, `multiverse`, and `universe` commands to create, advance, inspect, and steer simulations.
-5. Prefer `--json` when the calling agent needs machine-readable output.
-
-Example agent-friendly calls:
-
-```bash
-PYTHONPATH=. python -m backend.cli --json status
-PYTHONPATH=. python -m backend.cli --json multiverse dag <big_bang_uuid>
-PYTHONPATH=. python -m backend.cli --json logs errors --limit 10
-PYTHONPATH=. python -m backend.cli --json troubleshoot --include-jobs
-```
-
-## Troubleshooting
-
-Check containers:
-
-```bash
-docker compose ps
-docker compose logs api
-docker compose logs worker_p0
-```
-
-If migrations fail, verify database URLs in `.env`:
-
-```text
-DATABASE_URL=postgresql+asyncpg://worldfork:worldfork@localhost:5433/worldfork
-DATABASE_URL_SYNC=postgresql+psycopg://worldfork:worldfork@localhost:5433/worldfork
-```
-
-If the host CLI cannot connect, confirm the API is reachable:
-
-```bash
-curl http://localhost:8003/health
-```
-
-If a real run fails before model output, confirm:
-
-```bash
-make cli ARGS="set-key OPENROUTER_API_KEY your_key_here"
-make cli ARGS="set-key DEFAULT_MODEL deepseek/deepseek-v3.2"
-make cli ARGS="troubleshoot --include-jobs"
-```
-
-Reset local Docker state when you want a clean database and Redis volume:
-
-```bash
-make clean-data
-make up
-make migrate
-```
-
-## Project Layout
-
-```text
-backend/                 FastAPI app, simulation engine, providers, tests, CLI
-backend/cli.py           Text-first CLI entry point
-infra/                   Docker, Postgres, and Alembic infrastructure
-source_of_truth/         Canonical simulation configuration and schemas
-runs/                    Runtime artifacts mounted into containers
-skill.md                 Agent-facing skill instructions
-docker-compose.yml       Backend, worker, Redis, Postgres, and CLI services
-```
-
-This branch intentionally does not include a browser frontend. All interaction is through the API, CLI, logs, reports, and structured JSON/text outputs.
+MIT — see [LICENSE](LICENSE).

@@ -1,8 +1,0 @@
-{
-  "additionalProperties": true,
-  "required": [
-    "name"
-  ],
-  "type": "object",
-  "version": "v1"
-}
