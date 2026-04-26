@@ -102,7 +102,11 @@ The backend keeps a per-job-type routing table (preferred + fallback model, time
 worldfork model list                           # see all 14 entries
 worldfork model get simulate_universe_tick     # one entry
 
-# Default scope = every job_type. Default fallback = deepseek/deepseek-v4-pro.
+# CLI's recommended preset (gemma-4-31b-it / gpt-5.4 / gemini-3.1-flash-lite).
+worldfork model defaults --dry-run             # preview what would change
+worldfork model defaults                       # apply
+
+# Or set per-call. Default scope = every job_type. Default fallback = gemini-3.1-flash-lite-preview.
 worldfork model set google/gemini-3.1-flash-lite-preview
 
 # Scope to one job_type, override fallback explicitly.
@@ -114,7 +118,19 @@ worldfork model set anthropic/claude-haiku-4-5 \
 worldfork model set google/gemini-3.1-flash-lite-preview --fallback ""
 ```
 
-Use this **before** `bigbang run-until-complete` (or any `bigbang start`) so the simulation runs on the model you want without a container roundtrip. Verify with `worldfork --verbosity normal logs requests --run-id <id> --limit 1` — `model_used` will show the resolved slug (often pinned to a date-stamped snapshot).
+### The default preset
+
+`worldfork model defaults` applies a tiered routing per the PRD's god-agent tier:
+
+| Tier | job_types | Model |
+|---|---|---|
+| God-class | `initialize_big_bang`, `god_agent_review`, `force_deviation`, `aggregate_run_results` | `openai/gpt-5.4` |
+| Standard | everything else (10 entries: tick simulation, deliberation, propagation, sociology, branching, review-index build, export, apply) | `google/gemma-4-31b-it` |
+| Fallback | every entry | `google/gemini-3.1-flash-lite-preview` |
+
+`aggregate_run_results` is in the god tier because it's the LLM call that produces the run-level **classification** (conflict_trajectory, institutional_legitimacy, etc.) that gets persisted into `results.classifications`. It is the classifier; there is no separate classifier job_type.
+
+Use `worldfork model defaults` **before** `bigbang run-until-complete` (or any `bigbang start`) so the simulation runs on the model you want without a container roundtrip. Verify with `worldfork --verbosity normal logs requests --run-id <id> --limit 1` — `model_used` will show the resolved slug (often pinned to a date-stamped snapshot).
 
 Knobs not exposed yet (use `worldfork query PATCH /settings/model-routing --data '...'` for now): `temperature`, `top_p`, `max_tokens`, `requests_per_minute`, `tokens_per_minute`, `timeout_seconds`, `daily_budget_usd`.
 

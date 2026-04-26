@@ -649,6 +649,40 @@ def cohort_transcript(args: argparse.Namespace, client: WorldForkClient) -> None
 _ROUTING_PATH = "/settings/model-routing"
 
 
+# ---------------------------------------------------------------------------
+# Default model preset.
+# ---------------------------------------------------------------------------
+# This is the CLI's opinion about which model each job_type should use unless
+# you say otherwise. Two tiers + a single fallback:
+#
+#   - "god-class" jobs → openai/gpt-5.4 (explicitly NOT 5.5). The PRD assigns
+#     this tier to god_agent_review, force_deviation, initialize_big_bang,
+#     AND aggregate_run_results — the last one is the LLM call that produces
+#     the run-level classification (conflict_trajectory, institutional_legitimacy,
+#     etc.) per prd.md line 185 + aggregator.py:286, so it must stay on the
+#     strong model or final reports degrade.
+#   - everything else → google/gemma-4-31b-it. Cheaper and good enough for
+#     per-tick simulation, deliberation, propagation, sociology, branching,
+#     review-index build, etc.
+#   - fallback (every entry) → google/gemini-3.1-flash-lite-preview. Fast,
+#     cheap, recovers from primary timeouts without bogging the queue.
+#
+# Apply with `worldfork model defaults`. Override with `worldfork model set`.
+
+PRESET_GOD_PRIMARY = "openai/gpt-5.4"
+PRESET_PRIMARY = "google/gemma-4-31b-it"
+PRESET_FALLBACK = "google/gemini-3.1-flash-lite-preview"
+PRESET_PROVIDER = "openrouter"
+PRESET_GOD_LIKE_JOB_TYPES = frozenset(
+    {
+        "god_agent_review",
+        "force_deviation",
+        "initialize_big_bang",
+        "aggregate_run_results",
+    }
+)
+
+
 def _fetch_routing(client: WorldForkClient) -> list[dict[str, Any]]:
     response = client.request("GET", _ROUTING_PATH)
     if not isinstance(response, dict):
@@ -726,6 +760,63 @@ def _patch_entry(
         out["fallback_provider"] = fallback_provider
         out["fallback_model"] = new_fallback
     return out
+
+
+def model_defaults(args: argparse.Namespace, client: WorldForkClient) -> None:
+    """Apply the CLI's recommended preset to every routing entry.
+
+    god_agent_review / force_deviation / initialize_big_bang → openai/gpt-5.4
+    everything else                                          → google/gemma-4-31b-it
+    fallback (every entry)                                   → google/gemini-3.1-flash-lite-preview
+
+    Pass ``--dry-run`` to see what would change without sending the PATCH.
+    """
+    entries = _fetch_routing(client)
+    patched: list[dict[str, Any]] = []
+    for e in entries:
+        primary = (
+            PRESET_GOD_PRIMARY
+            if e.get("job_type") in PRESET_GOD_LIKE_JOB_TYPES
+            else PRESET_PRIMARY
+        )
+        patched.append(
+            _patch_entry(
+                e,
+                new_model=primary,
+                new_fallback=PRESET_FALLBACK,
+                provider=PRESET_PROVIDER,
+                fallback_provider=PRESET_PROVIDER,
+            )
+        )
+
+    if args.dry_run:
+        rows = [
+            {
+                "job_type": p["job_type"],
+                "preferred_model": p["preferred_model"],
+                "fallback_model": p["fallback_model"],
+            }
+            for p in patched
+        ]
+        if args.json:
+            emit(args, rows)
+            return
+        print("Dry run — would PATCH the following:")
+        print_table(rows, ["job_type", "preferred_model", "fallback_model"])
+        return
+
+    response = client.request("PATCH", _ROUTING_PATH, json_body={"entries": patched})
+    if args.json:
+        emit(args, response)
+        return
+    print(
+        f"Applied default preset to {len(patched)} entries. "
+        f"god-class → {PRESET_GOD_PRIMARY}, others → {PRESET_PRIMARY}, "
+        f"fallback → {PRESET_FALLBACK}."
+    )
+    if isinstance(response, dict) and isinstance(response.get("entries"), list):
+        rows = [_routing_row(e) for e in response["entries"]]
+        print_table(rows, ["job_type", "preferred_model", "fallback_model", "timeout_s"])
 
 
 def model_set(args: argparse.Namespace, client: WorldForkClient) -> None:

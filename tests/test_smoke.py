@@ -66,6 +66,8 @@ def test_parser_builds_and_lists_top_level_commands() -> None:
         ["model", "set", "google/gemini-3.1-flash-lite-preview"],
         ["model", "set", "x/y", "--job-type", "initialize_big_bang"],
         ["model", "set", "x/y", "--fallback", ""],
+        ["model", "defaults"],
+        ["model", "defaults", "--dry-run"],
     ],
 )
 def test_subcommands_parse(argv: list[str]) -> None:

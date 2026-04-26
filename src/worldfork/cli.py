@@ -295,6 +295,20 @@ def _add_model(sub: argparse._SubParsersAction) -> None:
     p.set_defaults(func=commands.model_get)
 
     p = s.add_parser(
+        "defaults",
+        help=(
+            "Apply the CLI's recommended preset: gemma-4-31b-it for most jobs, "
+            "gpt-5.4 for god/init jobs, gemini-3.1-flash-lite-preview as fallback."
+        ),
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would be PATCHed without sending the request.",
+    )
+    p.set_defaults(func=commands.model_defaults)
+
+    p = s.add_parser(
         "set",
         help=(
             "Swap the preferred (and optionally fallback) model. "
@@ -310,10 +324,10 @@ def _add_model(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--all", action="store_true", help="Apply to every job_type (default).")
     p.add_argument(
         "--fallback",
-        default="deepseek/deepseek-v4-pro",
+        default="google/gemini-3.1-flash-lite-preview",
         help=(
             "Fallback model on the same scope "
-            "(default: deepseek/deepseek-v4-pro). "
+            "(default: google/gemini-3.1-flash-lite-preview). "
             "Pass an empty string to leave the existing fallback untouched."
         ),
     )
