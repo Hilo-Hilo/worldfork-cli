@@ -21,7 +21,7 @@ DEFAULT_BASE_URL = (
     or "http://127.0.0.1:8003"
 )
 DEFAULT_API_PREFIX = "/api"
-DEFAULT_TIMEOUT = 30.0
+DEFAULT_TIMEOUT: float | None = None
 DEFAULT_ENV_FILE = os.getenv("WORLD_FORK_ENV_FILE", ".env")
 
 
@@ -69,14 +69,14 @@ def _print_table(items: list[dict[str, Any]], columns: list[str]) -> None:
         print(" | ".join(row_text[i].ljust(widths[i]) for i in range(len(columns))))
 
 
-def _short_id(value: Any, length: int = 8) -> str:
+def _short_id(value: Any, length: int = 12) -> str:
     return str(value)[:length]
 
 
 def _format_run_status(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
-            "id": _short_id(row.get("id") or row.get("big_bang_id") or row.get("run_id")),
+            "id": str(row.get("id") or row.get("big_bang_id") or row.get("run_id") or ""),
             "status": row.get("status", "unknown"),
             "name": row.get("name", row.get("display_name", "")),
             "created_at": row.get("created_at", ""),
@@ -86,7 +86,7 @@ def _format_run_status(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 class WorldForkClient:
-    def __init__(self, base_url: str, api_prefix: str = DEFAULT_API_PREFIX, timeout: float = DEFAULT_TIMEOUT) -> None:
+    def __init__(self, base_url: str, api_prefix: str = DEFAULT_API_PREFIX, timeout: float | None = DEFAULT_TIMEOUT) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_prefix = api_prefix.strip("/")
         self._http = httpx.Client(base_url=self.base_url, timeout=timeout)
@@ -193,7 +193,7 @@ def cmd_bigbang_list(args: argparse.Namespace, client: WorldForkClient) -> None:
 
     rows = [
         {
-            "id": _short_id(item.get("id", "")),
+            "id": str(item.get("id", "")),
             "status": item.get("status", ""),
             "name": item.get("name", ""),
             "created_at": item.get("created_at", ""),
@@ -237,7 +237,40 @@ def cmd_bigbang_run_until_complete(args: argparse.Namespace, client: WorldForkCl
     body: dict[str, Any] = {}
     if args.max_ticks:
         body["max_total_ticks"] = args.max_ticks
-    response = client.request("POST", f"/big-bangs/{args.big_bang_id}/run-until-complete", json_body=body or None)
+
+    if not args.sync:
+        job_payload: dict[str, Any] = {
+            "job_type": "run_big_bang_until_complete",
+            "big_bang_id": args.big_bang_id,
+            "payload": body,
+        }
+        response = client.request("POST", "/jobs", json_body=job_payload)
+        if not args.json:
+            job_id = response.get("id") or response.get("job_id") if isinstance(response, dict) else None
+            print(f"Queued run_big_bang_until_complete for {args.big_bang_id}.")
+            if job_id:
+                print(f"  job_id: {job_id}")
+            print("  Track with: jobs list / logs errors / multiverse metrics")
+            print("  Use --sync to block on the simulation instead (long).")
+        else:
+            print(_safe_json_dump(response))
+        return
+
+    print(
+        "WARNING: --sync runs the entire simulation in the API request thread.\n"
+        f"  This will block the CLI until {args.max_ticks} tick(s) finish across all active universes.\n"
+        "  Wall time depends on:\n"
+        "    - --max-ticks (current: %d)\n"
+        "    - DEFAULT_MODEL / FALLBACK_MODEL set in .env (LLM latency dominates)\n"
+        "    - active universe count and branching\n"
+        "  Expect tens of minutes to hours for non-trivial scenarios.\n"
+        "  Bump --timeout (default 120s) accordingly, e.g. --timeout 7200."
+        % args.max_ticks,
+        file=sys.stderr,
+    )
+    response = client.request(
+        "POST", f"/big-bangs/{args.big_bang_id}/run-until-complete", json_body=body or None
+    )
     _ensure_response(args, response)
 
 
@@ -253,7 +286,7 @@ def cmd_bigbang_reports(args: argparse.Namespace, client: WorldForkClient) -> No
 
     rows = [
         {
-            "id": _short_id(item.get("id", "")),
+            "id": str(item.get("id", "")),
             "version": item.get("version", ""),
             "title": item.get("title", ""),
             "summary": (item.get("summary", "") or "")[:120],
@@ -307,10 +340,10 @@ def cmd_jobs_list(args: argparse.Namespace, client: WorldForkClient) -> None:
 
     rows = [
         {
-            "id": _short_id(item.get("id", "")),
+            "id": str(item.get("id", "")),
             "type": item.get("job_type", ""),
             "status": item.get("status", ""),
-            "run": _short_id(item.get("run_id", "") or item.get("big_bang_id", "")),
+            "run": str(item.get("run_id", "") or item.get("big_bang_id", "")),
             "created": item.get("created_at", ""),
         }
         for item in response
@@ -463,15 +496,11 @@ def cmd_universe_trace(args: argparse.Namespace, client: WorldForkClient) -> Non
 
 def cmd_logs_list(args: argparse.Namespace, client: WorldForkClient, scope: str) -> None:
     path = "/logs/" + scope
-    params = {"limit": args.limit, "offset": args.offset}
-    if args.run_id:
-        params["run_id"] = args.run_id
-    if args.universe_id:
-        params["universe_id"] = args.universe_id
-    if args.provider:
-        params["provider"] = args.provider
-    if args.status:
-        params["status"] = args.status
+    params: dict[str, Any] = {"limit": args.limit, "offset": args.offset}
+    for key in ("run_id", "universe_id", "provider", "status"):
+        value = getattr(args, key, None)
+        if value:
+            params[key] = value
 
     response = client.request("GET", path, params=params)
     if args.json:
@@ -564,7 +593,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="WorldFork backend CLI")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Base URL for the backend")
     parser.add_argument("--api-prefix", default=DEFAULT_API_PREFIX, help="API prefix (default: /api)")
-    parser.add_argument("--timeout", default=DEFAULT_TIMEOUT, type=float, help="HTTP timeout seconds")
+    parser.add_argument(
+        "--timeout",
+        default=DEFAULT_TIMEOUT,
+        type=float,
+        help="HTTP timeout seconds (default: none — wait indefinitely; pass a number to cap)",
+    )
     parser.add_argument("--json", action="store_true", help="Output raw JSON responses")
     parser.add_argument("--env-file", default=DEFAULT_ENV_FILE, help="Environment file path for set-key")
 
@@ -621,9 +655,17 @@ def build_parser() -> argparse.ArgumentParser:
     bb_resume.add_argument("big_bang_id")
     bb_resume.set_defaults(func=lambda a, c: cmd_bigbang_action(a, c, "resume"))
 
-    bb_run_complete = bb_sub.add_parser("run-until-complete", help="Run a Big Bang to completion")
+    bb_run_complete = bb_sub.add_parser(
+        "run-until-complete",
+        help="Run a Big Bang to completion (default: enqueue async job; --sync blocks the CLI)",
+    )
     bb_run_complete.add_argument("big_bang_id")
     bb_run_complete.add_argument("--max-ticks", type=int, default=24)
+    bb_run_complete.add_argument(
+        "--sync",
+        action="store_true",
+        help="Block the CLI on the API call until the simulation finishes (slow; bump --timeout).",
+    )
     bb_run_complete.set_defaults(func=cmd_bigbang_run_until_complete)
 
     bb_reports = bb_sub.add_parser("reports", help="List reports for a Big Bang")

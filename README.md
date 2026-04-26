@@ -1,8 +1,8 @@
-# WorldFork CLI Backend
+# worldfork-cli
 
-WorldFork is a headless backend for explainable, recursively branching social simulations. This branch removes the browser frontend and exposes the system through an API, a Docker stack, and a text-first CLI that coding agents such as Claude Code, Codex, or local scripts can drive.
+Headless backend and text-first CLI for WorldFork — a platform for explainable, recursively branching social simulations. There is no browser frontend in this repo: everything happens through a FastAPI backend, a Docker stack, and `backend.cli`, which coding agents (Claude Code, Codex, local scripts) can drive directly.
 
-A user creates a root scenario called a **Big Bang**. The backend initializes a simulated society with cohort states, hero agents, media channels, social feeds, event queues, sociology rules, tick progression, God-agent reviews, and multiverse branching. Operators interact with that state through `backend.cli` instead of a UI.
+A user creates a root scenario called a **Big Bang**. The backend initializes a simulated society with cohort states, hero agents, media channels, social feeds, event queues, sociology rules, tick progression, God-agent reviews, and multiverse branching. Operators read and steer that state through CLI commands.
 
 ## What Is Included
 
@@ -25,7 +25,8 @@ The backend can boot without a real provider key, but full simulation workflows 
 ## Quickstart
 
 ```bash
-git checkout cli-backend
+git clone https://github.com/Hilo-Hilo/worldfork-cli.git
+cd worldfork-cli
 cp .env.example .env
 ```
 
@@ -114,6 +115,18 @@ make cli ARGS="--json status"
 make cli ARGS="--json jobs list --limit 5"
 ```
 
+### Timeouts
+
+The CLI ships with **no HTTP timeout by default** — every command waits as long as the API takes to respond. This matters because some operations (`bigbang run-until-complete --sync`, large `multiverse step` jobs, slow LLM providers) can take many minutes.
+
+Pass `--timeout SECONDS` to cap an individual request:
+
+```bash
+make cli ARGS="--timeout 30 status"
+```
+
+Note: the `--timeout` flag belongs to the top-level CLI, not subcommands. It must come before the subcommand name (`bigbang`, `jobs`, etc.).
+
 ## Common Workflows
 
 List current runs:
@@ -141,6 +154,35 @@ make cli ARGS="bigbang start <big_bang_uuid>"
 make cli ARGS="bigbang pause <big_bang_uuid>"
 make cli ARGS="bigbang resume <big_bang_uuid>"
 make cli ARGS="bigbang run-until-complete <big_bang_uuid>"
+```
+
+### `run-until-complete`: async by default
+
+`bigbang run-until-complete` enqueues a `run_big_bang_until_complete` job and returns immediately with a `job_id`. Track it with `jobs list`, `logs errors`, or `multiverse metrics`.
+
+```bash
+make cli ARGS="bigbang run-until-complete <big_bang_uuid> --max-ticks 24"
+# Queued run_big_bang_until_complete for <big_bang_uuid>.
+#   job_id: <uuid>
+#   Track with: jobs list / logs errors / multiverse metrics
+```
+
+Pass `--sync` to block the CLI on the API until the simulation finishes:
+
+```bash
+make cli ARGS="bigbang run-until-complete <big_bang_uuid> --sync --max-ticks 24"
+```
+
+**WARNING.** `--sync` runs the entire simulation in the API request thread. Wall time depends on:
+
+- `--max-ticks` (default 24)
+- `DEFAULT_MODEL` / `FALLBACK_MODEL` set in `.env` — LLM latency dominates
+- active universe count and branching factor
+
+Expect tens of minutes to hours for non-trivial scenarios. Combine `--sync` with an explicit cap if you want a hard deadline:
+
+```bash
+make cli ARGS="--timeout 7200 bigbang run-until-complete <big_bang_uuid> --sync"
 ```
 
 Inspect multiverse state:
@@ -243,6 +285,13 @@ make migrate
 make cli ARGS="status"
 make cli ARGS="jobs types"
 ```
+
+## Async vs sync model
+
+- **CLI process**: synchronous. `backend/cli.py` uses `httpx.Client` (not `AsyncClient`). One invocation = one process = one blocking HTTP request.
+- **Server handlers**: mostly synchronous FastAPI endpoints (plain `def`, not `async def`). They block on the SQLAlchemy session for the duration of the request.
+- **Background work**: lives in **Celery**, not the request path. `bigbang start`, `multiverse step`, `universe step`, `jobs create`, and the default `bigbang run-until-complete` all enqueue work to the priority workers (`worker_p0`–`p3`) and return quickly. The CLI does not poll for completion — follow up with `jobs list` / `logs errors` / `multiverse metrics`.
+- **Blocking exception**: `bigbang run-until-complete --sync` is synchronous server-side; the CLI sits on the HTTP connection until the simulation finishes. See the warning above.
 
 ## Agent Integration
 
