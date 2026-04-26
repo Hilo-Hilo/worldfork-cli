@@ -26,3 +26,6 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+# Sibling repo, peeked at via filesystem only
+WorldFork
