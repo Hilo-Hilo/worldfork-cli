@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 
 from app.core.config import get_settings
-from app.llm.provider import LLMProvider
+from app.llm.provider import LLMProvider, LLMProviderUnavailable
 from app.llm.schemas import LLMRequest, LLMResponse
 
 
@@ -13,7 +13,7 @@ class OpenRouterProvider(LLMProvider):
     async def complete(self, request: LLMRequest) -> LLMResponse:
         settings = get_settings()
         if not settings.openrouter_api_key:
-            raise RuntimeError("OPENROUTER_API_KEY is required for OpenRouter calls")
+            raise LLMProviderUnavailable("LLM unavailable")
 
         payload = {
             "model": request.model or settings.default_model,
@@ -24,6 +24,8 @@ class OpenRouterProvider(LLMProvider):
                 "type": "json_schema",
                 "json_schema": request.json_schema,
             }
+        else:
+            payload["response_format"] = {"type": "json_object"}
         for key in ("temperature", "max_tokens", "top_p"):
             if key in request.metadata:
                 payload[key] = request.metadata[key]
@@ -40,7 +42,10 @@ class OpenRouterProvider(LLMProvider):
                 headers=headers,
                 json=payload,
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise LLMProviderUnavailable("LLM unavailable") from exc
             data = response.json()
 
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")

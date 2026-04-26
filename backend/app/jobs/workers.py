@@ -5,7 +5,7 @@ from dramatiq.brokers.redis import RedisBroker
 
 from app.core.config import get_settings
 from app.db.session import SessionLocal
-from app.jobs.tasks import execute_job
+from app.jobs.tasks import JobNotRunnableError, execute_job
 from app.db import models
 
 
@@ -19,7 +19,11 @@ def run_job(job_id: str) -> None:
     try:
         job = db.get(models.Job, job_id)
         if job:
-            execute_job(db, job)
+            try:
+                execute_job(db, job, commit_running=True)
+            except JobNotRunnableError:
+                db.rollback()
+                return
             db.commit()
     finally:
         db.close()

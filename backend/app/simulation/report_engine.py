@@ -9,7 +9,12 @@ from app.storage.pdf_store import render_markdown_pdf
 
 
 def generate_multiverse_report(db: Session, *, multiverse: models.Multiverse, title: str | None = None, summary: str | None = None) -> models.ReportVersion:
-    report = db.scalar(select(models.Report).where(models.Report.multiverse_id == multiverse.id, models.Report.report_type == "multiverse"))
+    db.execute(select(models.Multiverse).where(models.Multiverse.id == multiverse.id).with_for_update()).scalar_one()
+    report = db.scalar(
+        select(models.Report)
+        .where(models.Report.multiverse_id == multiverse.id, models.Report.report_type == "multiverse")
+        .with_for_update()
+    )
     if not report:
         report = models.Report(big_bang_id=multiverse.big_bang_id, multiverse_id=multiverse.id, report_type="multiverse", status="draft", current_version=0)
         db.add(report)
@@ -43,21 +48,6 @@ def generate_multiverse_report(db: Session, *, multiverse: models.Multiverse, ti
             f"- Status: {multiverse.status}",
         ]
     )
-    artifact = ArtifactStore().write_text(
-        db,
-        big_bang_id=multiverse.big_bang_id,
-        relative_path=f"big_bang_{multiverse.big_bang_id}/multiverses/{multiverse.ui_label}/reports/report_v{version}.md",
-        body=body,
-        kind="report_markdown",
-        content_type="text/markdown",
-    )
-    pdf_artifact = render_markdown_pdf(
-        db,
-        big_bang_id=multiverse.big_bang_id,
-        relative_path=f"big_bang_{multiverse.big_bang_id}/multiverses/{multiverse.ui_label}/reports/report_v{version}.pdf",
-        title=title_text,
-        markdown=body,
-    )
     report.current_version = version
     report.status = "completed"
     multiverse.report_status = "completed"
@@ -66,16 +56,41 @@ def generate_multiverse_report(db: Session, *, multiverse: models.Multiverse, ti
         version=version,
         title=title_text,
         summary=summary,
-        markdown_artifact_id=artifact.id,
-        pdf_artifact_id=pdf_artifact.id,
     )
     db.add(report_version)
+    db.flush()
+    artifact = ArtifactStore().write_text(
+        db,
+        big_bang_id=multiverse.big_bang_id,
+        relative_path=f"big_bang_{multiverse.big_bang_id}/multiverses/{multiverse.ui_label}/reports/{report_version.id}/report_v{version}.md",
+        body=body,
+        kind="report_markdown",
+        content_type="text/markdown",
+    )
+    pdf_artifact = render_markdown_pdf(
+        db,
+        big_bang_id=multiverse.big_bang_id,
+        relative_path=f"big_bang_{multiverse.big_bang_id}/multiverses/{multiverse.ui_label}/reports/{report_version.id}/report_v{version}.pdf",
+        title=title_text,
+        markdown=body,
+    )
+    report_version.markdown_artifact_id = artifact.id
+    report_version.pdf_artifact_id = pdf_artifact.id
     db.flush()
     return report_version
 
 
 def generate_final_big_bang_report(db: Session, *, big_bang: models.BigBang, title: str | None = None, summary: str | None = None) -> models.ReportVersion:
-    report = db.scalar(select(models.Report).where(models.Report.big_bang_id == big_bang.id, models.Report.report_type == "final_big_bang", models.Report.multiverse_id.is_(None)))
+    db.execute(select(models.BigBang).where(models.BigBang.id == big_bang.id).with_for_update()).scalar_one()
+    report = db.scalar(
+        select(models.Report)
+        .where(
+            models.Report.big_bang_id == big_bang.id,
+            models.Report.report_type == "final_big_bang",
+            models.Report.multiverse_id.is_(None),
+        )
+        .with_for_update()
+    )
     if not report:
         report = models.Report(big_bang_id=big_bang.id, report_type="final_big_bang", status="draft", current_version=0)
         db.add(report)
@@ -104,21 +119,6 @@ def generate_final_big_bang_report(db: Session, *, big_bang: models.BigBang, tit
             f"- Big Bang ID: {big_bang.id}",
         ]
     )
-    artifact = ArtifactStore().write_text(
-        db,
-        big_bang_id=big_bang.id,
-        relative_path=f"big_bang_{big_bang.id}/reports/final_big_bang_report_v{version}.md",
-        body=body,
-        kind="report_markdown",
-        content_type="text/markdown",
-    )
-    pdf_artifact = render_markdown_pdf(
-        db,
-        big_bang_id=big_bang.id,
-        relative_path=f"big_bang_{big_bang.id}/reports/final_big_bang_report_v{version}.pdf",
-        title=title_text,
-        markdown=body,
-    )
     report.current_version = version
     report.status = "completed"
     report_version = models.ReportVersion(
@@ -126,9 +126,25 @@ def generate_final_big_bang_report(db: Session, *, big_bang: models.BigBang, tit
         version=version,
         title=title_text,
         summary=summary,
-        markdown_artifact_id=artifact.id,
-        pdf_artifact_id=pdf_artifact.id,
     )
     db.add(report_version)
+    db.flush()
+    artifact = ArtifactStore().write_text(
+        db,
+        big_bang_id=big_bang.id,
+        relative_path=f"big_bang_{big_bang.id}/reports/{report_version.id}/final_big_bang_report_v{version}.md",
+        body=body,
+        kind="report_markdown",
+        content_type="text/markdown",
+    )
+    pdf_artifact = render_markdown_pdf(
+        db,
+        big_bang_id=big_bang.id,
+        relative_path=f"big_bang_{big_bang.id}/reports/{report_version.id}/final_big_bang_report_v{version}.pdf",
+        title=title_text,
+        markdown=body,
+    )
+    report_version.markdown_artifact_id = artifact.id
+    report_version.pdf_artifact_id = pdf_artifact.id
     db.flush()
     return report_version

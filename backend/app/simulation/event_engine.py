@@ -93,7 +93,7 @@ def summarize_executed_events(
             ],
             metadata={"max_tokens": 800, "temperature": 0.2},
         )
-        parsed = response.parsed or {}
+        parsed = response.parsed if isinstance(response.parsed, dict) else {}
         summary_text = parsed.get("what_happened") or response.content or f"Executed event: {event.title}"
         artifact = ArtifactStore().write_json(
             db,
@@ -110,6 +110,7 @@ def summarize_executed_events(
             artifact_id=artifact.id,
         )
         db.add(summary)
+        db.flush()
         summaries.append(
             {
                 "event_id": str(event.id),

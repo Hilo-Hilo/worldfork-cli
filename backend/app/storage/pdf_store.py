@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from io import BytesIO
 
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
 from sqlalchemy.orm import Session
 
 from app.db import models
 from app.storage.artifact_store import ArtifactStore
+
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+except ModuleNotFoundError:
+    letter = None
+    canvas = None
 
 
 def render_markdown_pdf(
@@ -18,6 +23,8 @@ def render_markdown_pdf(
     title: str,
     markdown: str,
 ) -> models.Artifact:
+    if canvas is None or letter is None:
+        raise RuntimeError("PDF rendering dependency reportlab is not installed")
     buffer = BytesIO()
     page = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
@@ -35,21 +42,12 @@ def render_markdown_pdf(
         y -= 14
     page.save()
     encoded = buffer.getvalue()
-    store = ArtifactStore()
-    store.ensure_root()
-    path = store.root / relative_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(encoded)
-    artifact = models.Artifact(
+    return ArtifactStore().write_bytes(
+        db,
         big_bang_id=big_bang_id,
+        relative_path=relative_path,
+        body=encoded,
         kind="report_pdf",
-        path=str(path),
         content_type="application/pdf",
-        content_hash=None,
-        size_bytes=len(encoded),
         debug_only=False,
-        meta={"relative_path": relative_path},
     )
-    db.add(artifact)
-    db.flush()
-    return artifact

@@ -6,9 +6,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.schemas import FrontendBootstrapOut, FrontendInspectOut, FrontendWorkspaceOut
 from app.api.utils import require, row_dict
 from app.core.config import get_settings
 from app.db import models
@@ -31,6 +32,78 @@ def _rows(rows: list[Any]) -> list[dict[str, Any]]:
 
 def _row(row: Any | None) -> dict[str, Any] | None:
     return _encode(row_dict(row)) if row else None
+
+
+def _actor_row(actor: models.Actor) -> dict[str, Any]:
+    row = _row(actor) or {}
+    archetype = actor.archetype or {}
+    if isinstance(archetype, dict) and archetype.get("trait_vector"):
+        row["trait_vector"] = archetype["trait_vector"]
+    return row
+
+
+def _trait_vectors(actors: list[models.Actor], multiverses: list[models.Multiverse]) -> list[dict[str, Any]]:
+    vectors: dict[str, dict[str, Any]] = {}
+    for actor in actors:
+        archetype = actor.archetype or {}
+        trait_vector = archetype.get("trait_vector") if isinstance(archetype, dict) else None
+        if trait_vector:
+            vectors[str(actor.id)] = {
+                "entity_id": str(actor.id),
+                "entity_type": "actor",
+                "name": actor.name,
+                "trait_vector": trait_vector,
+            }
+    for multiverse in multiverses:
+        state = multiverse.state or {}
+        state_vectors = state.get("trait_vectors", []) if isinstance(state, dict) else []
+        for index, trait_vector in enumerate(state_vectors):
+            if not isinstance(trait_vector, dict):
+                continue
+            key = str(
+                trait_vector.get("entity_id")
+                or trait_vector.get("actor_name")
+                or trait_vector.get("name")
+                or f"{multiverse.id}:{index}"
+            )
+            vectors.setdefault(
+                key,
+                {
+                    "entity_id": trait_vector.get("entity_id"),
+                    "entity_type": trait_vector.get("entity_type") or "cohort_or_public",
+                    "name": trait_vector.get("actor_name") or trait_vector.get("name") or key,
+                    "trait_vector": trait_vector,
+                },
+            )
+    return _encode(list(vectors.values()))
+
+
+def _graph_influence_summary(edges: list[models.GraphEdge]) -> dict[str, Any]:
+    layer_counts: dict[str, int] = {}
+    strongest: list[dict[str, Any]] = []
+    fallback_edge_count = 0
+    for edge in edges:
+        layer_counts[edge.layer] = layer_counts.get(edge.layer, 0) + 1
+        payload = edge.payload or {}
+        if isinstance(payload, dict) and payload.get("fallback_edge"):
+            fallback_edge_count += 1
+        strongest.append(
+            {
+                "id": str(edge.id),
+                "layer": edge.layer,
+                "source_actor_id": str(edge.source_actor_id) if edge.source_actor_id else None,
+                "target_actor_id": str(edge.target_actor_id) if edge.target_actor_id else None,
+                "weight": edge.weight,
+                "polarity": payload.get("polarity") if isinstance(payload, dict) else None,
+                "confidence": payload.get("confidence") if isinstance(payload, dict) else None,
+            }
+        )
+    strongest.sort(key=lambda item: abs(float(item.get("weight") or 0)), reverse=True)
+    return {
+        "layer_counts": layer_counts,
+        "strongest_edges": strongest[:12],
+        "fallback_edge_count": fallback_edge_count,
+    }
 
 
 def _load_source_of_truth() -> dict[str, Any]:
@@ -69,7 +142,7 @@ def _frontend_defaults() -> dict[str, Any]:
     }
 
 
-@router.get("/bootstrap")
+@router.get("/bootstrap", response_model=FrontendBootstrapOut)
 def bootstrap():
     source = _load_source_of_truth()
     settings = get_settings()
@@ -98,9 +171,11 @@ def bootstrap():
     }
 
 
-@router.get("/workspace/{big_bang_id}")
+@router.get("/workspace/{big_bang_id}", response_model=FrontendWorkspaceOut)
 def workspace(big_bang_id: UUID, db: Session = Depends(get_db)):
     big_bang = require(db, models.BigBang, big_bang_id)
+    ticks_source_limit = 250
+    latest_ticks_limit = 50
     multiverses = db.scalars(
         select(models.Multiverse)
         .where(models.Multiverse.big_bang_id == big_bang_id)
@@ -115,8 +190,13 @@ def workspace(big_bang_id: UUID, db: Session = Depends(get_db)):
         select(models.TickSnapshot)
         .where(models.TickSnapshot.big_bang_id == big_bang_id)
         .order_by(models.TickSnapshot.created_at.desc())
-        .limit(250)
+        .limit(ticks_source_limit)
     ).all()
+    total_ticks = db.scalar(
+        select(func.count())
+        .select_from(models.TickSnapshot)
+        .where(models.TickSnapshot.big_bang_id == big_bang_id)
+    ) or 0
     actors = db.scalars(
         select(models.Actor)
         .where(models.Actor.big_bang_id == big_bang_id)
@@ -127,6 +207,12 @@ def workspace(big_bang_id: UUID, db: Session = Depends(get_db)):
         .where(models.GraphSnapshot.big_bang_id == big_bang_id)
         .order_by(models.GraphSnapshot.created_at.desc())
         .limit(100)
+    ).all()
+    graph_edges = db.scalars(
+        select(models.GraphEdge)
+        .where(models.GraphEdge.big_bang_id == big_bang_id)
+        .order_by(models.GraphEdge.created_at.desc())
+        .limit(500)
     ).all()
     emotion_snapshots = db.scalars(
         select(models.EmotionGraphSnapshot)
@@ -144,6 +230,12 @@ def workspace(big_bang_id: UUID, db: Session = Depends(get_db)):
         select(models.SociologySignal)
         .where(models.SociologySignal.big_bang_id == big_bang_id)
         .order_by(models.SociologySignal.created_at.desc())
+        .limit(150)
+    ).all()
+    prompt_influences = db.scalars(
+        select(models.SociologyPromptInfluence)
+        .where(models.SociologyPromptInfluence.big_bang_id == big_bang_id)
+        .order_by(models.SociologyPromptInfluence.created_at.desc())
         .limit(150)
     ).all()
     reports = db.scalars(
@@ -187,11 +279,13 @@ def workspace(big_bang_id: UUID, db: Session = Depends(get_db)):
         "multiverses": _rows(multiverses),
         "lineage_edges": _rows(lineage_edges),
         "ticks_by_multiverse": dict(ticks_by_multiverse),
-        "latest_ticks": _rows(latest_ticks[:50]),
-        "actors": _rows(actors),
+        "latest_ticks": _rows(latest_ticks[:latest_ticks_limit]),
+        "actors": [_actor_row(actor) for actor in actors],
         "graphs": {
             "layers": sorted(graph_layers.values(), key=lambda item: item["layer"]),
             "snapshots": _rows(graph_snapshots[:25]),
+            "influence_summary": _graph_influence_summary(graph_edges),
+            "trait_vectors": _trait_vectors(actors, multiverses),
         },
         "emotion_observability": {
             "emotions_seen": emotions_seen,
@@ -201,14 +295,22 @@ def workspace(big_bang_id: UUID, db: Session = Depends(get_db)):
         "sociology": {
             "models_seen": sociology_models,
             "signals": _rows(sociology_signals[:50]),
+            "prompt_influences": _rows(prompt_influences[:50]),
         },
         "reports": _rows(reports),
         "jobs": _rows(jobs),
         "activity": activity,
+        "truncation": {
+            "ticks_source_limit": ticks_source_limit,
+            "latest_ticks_limit": latest_ticks_limit,
+            "total_ticks": total_ticks,
+            "ticks_source_truncated": total_ticks > len(latest_ticks),
+            "latest_ticks_truncated": len(latest_ticks) > latest_ticks_limit,
+        },
     }
 
 
-@router.get("/inspect/{object_type}/{object_id}")
+@router.get("/inspect/{object_type}/{object_id}", response_model=FrontendInspectOut)
 def inspect(object_type: str, object_id: UUID, db: Session = Depends(get_db)):
     object_type = object_type.replace("-", "_").lower()
     if object_type == "big_bang":
@@ -279,6 +381,20 @@ def inspect(object_type: str, object_id: UUID, db: Session = Depends(get_db)):
             .order_by(models.ReportVersion.version.desc())
         ).all()
         return {"type": object_type, "item": _row(report), "versions": _rows(versions)}
+    if object_type == "report_version":
+        version = require(db, models.ReportVersion, object_id)
+        report = require(db, models.Report, version.report_id)
+        versions = db.scalars(
+            select(models.ReportVersion)
+            .where(models.ReportVersion.report_id == version.report_id)
+            .order_by(models.ReportVersion.version.desc())
+        ).all()
+        return {
+            "type": object_type,
+            "item": _row(version),
+            "report": _row(report),
+            "versions": _rows(versions),
+        }
     if object_type == "job":
         return {"type": object_type, "item": _row(require(db, models.Job, object_id))}
     raise HTTPException(status_code=404, detail=f"unsupported inspector type: {object_type}")

@@ -29,6 +29,28 @@ def test_openapi_includes_frontend_routes():
     assert "/api/frontend/inspect/{object_type}/{object_id}" in paths
 
 
+def test_spa_routes_do_not_404_when_frontend_dist_is_missing():
+    for path in [
+        "/",
+        "/big-bangs",
+        "/big-bangs/new",
+        f"/workspace/00000000-0000-0000-0000-000000000000",
+        "/reports",
+        "/reports/report/00000000-0000-0000-0000-000000000000",
+        "/reports/version/00000000-0000-0000-0000-000000000000",
+        "/jobs",
+        "/settings",
+    ]:
+        response = client.get(path)
+        assert response.status_code == 200, path
+
+
+def test_static_mount_does_not_expose_frontend_source_tree():
+    response = client.get("/static/package.json")
+
+    assert response.status_code == 404
+
+
 def test_frontend_inspector_rejects_unknown_type_without_db_query():
     response = client.get("/api/frontend/inspect/unknown/00000000-0000-0000-0000-000000000000")
 

@@ -59,6 +59,7 @@ def update_graph_layers(
             executed_events=executed_events,
             metrics=metrics,
         )
+        db.flush()
         edge_summaries = [_edge_summary(edge, actor_by_id) for edge in evolved_edges]
         node_summaries = _node_summaries(actors, edge_summaries)
         layer_summary = summarize_graph_layer(layer, edge_summaries)
@@ -283,6 +284,8 @@ def _keyword_pressure(text: str, keywords: list[str]) -> float:
 def _social_counts_by_actor(social_observations: list[dict]) -> dict[str, int]:
     counts: dict[str, int] = defaultdict(int)
     for item in social_observations:
+        if not isinstance(item, dict):
+            continue
         actor_id = item.get("actor_id")
         if actor_id:
             counts[str(actor_id)] += 1

@@ -51,10 +51,10 @@ def run_agent_decisions(
             ],
             metadata={"max_tokens": 700, "temperature": 0.4, "agent_type": actor.actor_type},
         )
-        parsed = response.parsed or {}
-        social_actions = _ensure_list(parsed.get("social_actions"))
-        proposed_events = _ensure_list(parsed.get("proposed_events"))
-        ratings = _ensure_list(parsed.get("emotion_self_ratings"))
+        parsed = response.parsed if isinstance(response.parsed, dict) else {}
+        social_actions = _dict_items(parsed.get("social_actions"))
+        proposed_events = _dict_items(parsed.get("proposed_events"))
+        ratings = _rating_items(parsed.get("emotion_self_ratings"))
         if not social_actions and not proposed_events and not ratings:
             social_actions = [
                 {
@@ -81,6 +81,8 @@ def run_agent_decisions(
 def apply_social_actions(db: Session, *, big_bang_id, multiverse_id, tick_index: int, parsed_actions: list[dict]) -> list[dict]:
     observations = []
     for action in parsed_actions:
+        if not isinstance(action, dict):
+            continue
         actor_id = action.get("actor_id")
         if "proposed_event" in action:
             continue
@@ -112,8 +114,10 @@ def apply_social_actions(db: Session, *, big_bang_id, multiverse_id, tick_index:
 def queue_agent_events(db: Session, *, big_bang_id, multiverse_id, tick_index: int, parsed_actions: list[dict]) -> list[dict]:
     queued = []
     for action in parsed_actions:
+        if not isinstance(action, dict):
+            continue
         event_payload = action.get("proposed_event")
-        if not event_payload:
+        if not isinstance(event_payload, dict):
             continue
         title = event_payload.get("title") or "Agent proposed event"
         scheduled_tick = _parse_scheduled_tick(event_payload.get("scheduled_tick"), tick_index + 1)
@@ -158,6 +162,25 @@ def _ensure_list(value) -> list:
     return value if isinstance(value, list) else [value]
 
 
+def _dict_items(value) -> list[dict]:
+    return [item for item in _ensure_list(value) if isinstance(item, dict)]
+
+
+def _rating_items(value) -> list[dict]:
+    ratings = []
+    for item in _ensure_list(value):
+        if not isinstance(item, dict):
+            continue
+        ratings.append(
+            {
+                **item,
+                "emotion": item.get("emotion") or item.get("emotion_key") or "uncertainty",
+                "value": _parse_float(item.get("value"), 0.0, low=0.0, high=10.0),
+            }
+        )
+    return ratings
+
+
 def _jsonable(value):
     if isinstance(value, dict):
         return {key: _jsonable(val) for key, val in value.items()}
@@ -177,3 +200,19 @@ def _parse_scheduled_tick(value, default: int) -> int:
     if match:
         return max(0, int(match.group(0)))
     return default
+
+
+def _parse_float(value, default: float, *, low: float | None = None, high: float | None = None) -> float:
+    if value is None:
+        parsed = default
+    else:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            match = re.search(r"-?\d+(?:\.\d+)?", str(value))
+            parsed = float(match.group(0)) if match else default
+    if low is not None:
+        parsed = max(low, parsed)
+    if high is not None:
+        parsed = min(high, parsed)
+    return parsed

@@ -1,16 +1,23 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+
+def _backend_relative(path: str) -> Path:
+    return (BACKEND_DIR / path).resolve()
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+psycopg://worldfork:worldfork@localhost:5432/worldfork"
-    artifact_root: Path = Path("../artifacts")
-    source_of_truth_dir: Path = Path("../source_of_truth")
+    artifact_root: Path = _backend_relative("../artifacts")
+    source_of_truth_dir: Path = _backend_relative("../source_of_truth")
     auto_create_tables: bool = False
     default_llm_provider: str = "openrouter"
     openrouter_api_key: str | None = None
@@ -38,6 +45,13 @@ class Settings(BaseSettings):
     llm_max_retries: int = 3
     llm_retry_backoff_seconds: float = 1.5
     cors_origins: list[str] = Field(default_factory=list)
+
+    @field_validator("artifact_root", "source_of_truth_dir", mode="after")
+    @classmethod
+    def resolve_backend_relative_path(cls, value: Path) -> Path:
+        if value.is_absolute():
+            return value.resolve()
+        return (BACKEND_DIR / value).resolve()
 
 
 @lru_cache

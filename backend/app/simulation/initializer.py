@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
+
 from sqlalchemy.orm import Session
 
 from app.api.schemas import BigBangCreate
 from app.core.config import get_settings
 from app.core.labels import tick_label
 from app.db import models
+from app.llm.prompt_builder import sanitize_sociology_prompt_influences
 from app.simulation.initialization_corpus import build_plain_text_corpus
 from app.simulation.initializer_agent import merge_initializer_lists, run_initializer_agent
 from app.simulation.source_truth_validation import normalize_initializer_against_source_of_truth
@@ -210,7 +213,7 @@ def create_big_bang(db: Session, payload: BigBangCreate) -> models.BigBang:
         initializer_output=initializer_output,
     )
 
-    for item in initializer_output.get("initial_events", []):
+    for item in _dict_items(initializer_output.get("initial_events", [])):
         if not isinstance(item, dict):
             continue
         event = models.Event(
@@ -219,7 +222,7 @@ def create_big_bang(db: Session, payload: BigBangCreate) -> models.BigBang:
             creator_actor_id=None,
             event_type=item.get("event_type", "announcement"),
             created_tick=0,
-            scheduled_tick=int(item.get("scheduled_tick", 1)),
+            scheduled_tick=_safe_int(item.get("scheduled_tick"), 1, low=0),
             status="queued",
             title=item.get("title", "Initializer event"),
             description=item.get("description"),
@@ -281,18 +284,17 @@ def persist_initializer_graphs_and_observability(
     actor_by_name: dict[str, models.Actor],
     initializer_output: dict,
 ) -> None:
-    for item in initializer_output.get("trait_vectors", []):
+    for item in _dict_items(initializer_output.get("trait_vectors", [])):
         actor = actor_by_name.get(str(item.get("actor_name") or item.get("name") or "").lower())
         if actor:
             actor.archetype = {**(actor.archetype or {}), "trait_vector": item}
 
     graph_by_layer: dict[str, list[dict]] = {}
-    for item in initializer_output.get("graph_edges", []):
-        if not isinstance(item, dict):
-            continue
+    for item in _dict_items(initializer_output.get("graph_edges", [])):
         source = actor_by_name.get(str(item.get("source_actor_name") or item.get("source") or "").lower())
         target = actor_by_name.get(str(item.get("target_actor_name") or item.get("target") or "").lower())
         layer = item.get("layer") or item.get("graph_layer") or "influence"
+        weight = _safe_float(item.get("weight"), 0.5, low=0.0, high=1.0)
         edge = models.GraphEdge(
             big_bang_id=big_bang.id,
             multiverse_id=root.id,
@@ -300,7 +302,7 @@ def persist_initializer_graphs_and_observability(
             source_actor_id=source.id if source else None,
             target_actor_id=target.id if target else None,
             layer=layer,
-            weight=float(item.get("weight", 0.5)),
+            weight=weight,
             payload={
                 "reason": item.get("reason"),
                 "evidence": item.get("evidence"),
@@ -313,7 +315,7 @@ def persist_initializer_graphs_and_observability(
             {
                 "source": source.name if source else item.get("source_actor_name"),
                 "target": target.name if target else item.get("target_actor_name"),
-                "weight": float(item.get("weight", 0.5)),
+                "weight": weight,
                 "reason": item.get("reason"),
             }
         )
@@ -340,9 +342,9 @@ def persist_initializer_graphs_and_observability(
     }
 
     emotion_values = []
-    for item in initializer_output.get("emotion_observations", []):
+    for item in _dict_items(initializer_output.get("emotion_observations", [])):
         actor = actor_by_name.get(str(item.get("actor_name") or item.get("name") or "").lower())
-        value = max(0.0, min(10.0, float(item.get("value", 0))))
+        value = _safe_float(item.get("value"), 0.0, low=0.0, high=10.0)
         observation = models.EmotionObservation(
             big_bang_id=big_bang.id,
             multiverse_id=root.id,
@@ -374,7 +376,7 @@ def persist_initializer_graphs_and_observability(
             graph={"policy": "observability_only_not_prompt_feedback", "values": emotion_values},
         ))
 
-    for item in initializer_output.get("sociology_baseline", []):
+    for item in _dict_items(initializer_output.get("sociology_baseline", [])):
         db.add(models.SociologySignal(
             big_bang_id=big_bang.id,
             multiverse_id=root.id,
@@ -382,13 +384,55 @@ def persist_initializer_graphs_and_observability(
             model=item.get("model", "attention_decay"),
             signal=item.get("signal", item),
         ))
-    for item in initializer_output.get("sociology_prompt_influences", []):
+    for item in sanitize_sociology_prompt_influences(_dict_items(initializer_output.get("sociology_prompt_influences", []))):
         actor = actor_by_name.get(str(item.get("actor_name") or "").lower())
+        influence = item.get("influence", item)
+        if not isinstance(influence, dict) or not influence:
+            continue
         db.add(models.SociologyPromptInfluence(
             big_bang_id=big_bang.id,
             multiverse_id=root.id,
             actor_id=actor.id if actor else None,
             tick_index=0,
             applies_to_tick_index=1,
-            influence=item.get("influence", item),
+            influence=influence,
         ))
+
+
+def _dict_items(value) -> list[dict]:
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else [value]
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _safe_int(value, default: int, *, low: int | None = None, high: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        match = re.search(r"-?\d+", str(value))
+        parsed = int(match.group(0)) if match else default
+    if low is not None:
+        parsed = max(low, parsed)
+    if high is not None:
+        parsed = min(high, parsed)
+    return parsed
+
+
+def _safe_float(
+    value,
+    default: float,
+    *,
+    low: float | None = None,
+    high: float | None = None,
+) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        match = re.search(r"-?\d+(?:\.\d+)?", str(value))
+        parsed = float(match.group(0)) if match else default
+    if low is not None:
+        parsed = max(low, parsed)
+    if high is not None:
+        parsed = min(high, parsed)
+    return parsed

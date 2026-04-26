@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,7 @@ def details(tick_snapshot_id: UUID, db: Session = Depends(get_db)):
 
 @router.get("/{tick_snapshot_id}/reasoning-traces")
 def reasoning(tick_snapshot_id: UUID, db: Session = Depends(get_db)):
+    require(db, models.TickSnapshot, tick_snapshot_id)
     return db.scalars(select(models.ReasoningTrace).where(models.ReasoningTrace.tick_snapshot_id == tick_snapshot_id)).all()
 
 
@@ -46,11 +47,13 @@ def social(tick_snapshot_id: UUID, db: Session = Depends(get_db)):
 
 @router.get("/{tick_snapshot_id}/tool-calls")
 def tool_calls(tick_snapshot_id: UUID, db: Session = Depends(get_db)):
+    require(db, models.TickSnapshot, tick_snapshot_id)
     return db.scalars(select(models.ToolCall).where(models.ToolCall.tick_snapshot_id == tick_snapshot_id)).all()
 
 
 @router.get("/{tick_snapshot_id}/emotion-observability")
 def emotion(tick_snapshot_id: UUID, db: Session = Depends(get_db)):
+    require(db, models.TickSnapshot, tick_snapshot_id)
     return db.scalars(select(models.EmotionGraphSnapshot).where(models.EmotionGraphSnapshot.tick_snapshot_id == tick_snapshot_id)).all()
 
 
@@ -68,4 +71,8 @@ def sociology(tick_snapshot_id: UUID, db: Session = Depends(get_db)):
 
 @router.get("/{tick_snapshot_id}/god-review")
 def god_review(tick_snapshot_id: UUID, db: Session = Depends(get_db)):
-    return db.scalar(select(models.GodAgentReview).where(models.GodAgentReview.tick_snapshot_id == tick_snapshot_id))
+    require(db, models.TickSnapshot, tick_snapshot_id)
+    review = db.scalar(select(models.GodAgentReview).where(models.GodAgentReview.tick_snapshot_id == tick_snapshot_id))
+    if not review:
+        raise HTTPException(status_code=404, detail="GodAgentReview not found")
+    return review

@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from app.core.config import get_settings
 from app.db import models
 from app.llm.audit import complete_with_audit
 from app.llm.prompt_templates import GOD_AGENT_SYSTEM_PROMPT
 from app.simulation.god_tools import VALID_TOOLS
-from sqlalchemy.orm import Session
 
 
-def review_provisional_tick(db: Session, multiverse: models.Multiverse, provisional_bundle: dict) -> tuple[dict, models.LLMCall | None]:
+def review_provisional_tick(
+    db: Session,
+    multiverse: models.Multiverse,
+    provisional_bundle: dict,
+) -> tuple[dict, models.LLMCall | None]:
     tick_index = provisional_bundle["tick_index"]
     settings = get_settings()
     response, call = complete_with_audit(
@@ -42,10 +48,13 @@ def review_provisional_tick(db: Session, multiverse: models.Multiverse, provisio
     branch_score = provisional_bundle.get("branch_score", 0)
     structural_tools = {"create_branch", "approve_split", "plan_merge", "approve_emergence"}
     parsed_decision = str(parsed.get("decision") or "").strip().lower()
-    explicit_continue = parsed_decision == "continue" or any(call["tool_name"] == "continue_timeline" for call in tool_calls)
+    explicit_continue = parsed_decision == "continue" or any(
+        call["tool_name"] == "continue_timeline" for call in tool_calls
+    )
     has_structural = any(call["tool_name"] in structural_tools for call in tool_calls)
     has_branch = any(call["tool_name"] == "create_branch" for call in tool_calls)
-    if branch_score >= 0.82 and not has_branch and (has_structural or not explicit_continue):
+    branch_threshold = _branch_score_threshold(db, multiverse)
+    if branch_score >= branch_threshold and not has_branch and (has_structural or not explicit_continue):
         tool_calls.append({
             "tool_name": "create_branch",
             "arguments": {
@@ -60,7 +69,7 @@ def review_provisional_tick(db: Session, multiverse: models.Multiverse, provisio
             "arguments": {"reason": "No validated branch trigger in this tick."},
             "idempotency_key": f"god:{multiverse.id}:tick:{tick_index}:continue",
         })
-    decision = parsed.get("decision") or ("branch" if branch_score >= 0.82 else "continue")
+    decision = parsed.get("decision") or ("branch" if branch_score >= branch_threshold else "continue")
     review = {
         "decision": decision,
         "rationale": parsed.get("rationale") or "God Agent reviewed the provisional tick bundle.",
@@ -75,6 +84,19 @@ def review_provisional_tick(db: Session, multiverse: models.Multiverse, provisio
         },
     }
     return review, call
+
+
+def _branch_score_threshold(db: Session, multiverse: models.Multiverse) -> float:
+    settings = get_settings()
+    config = db.scalar(
+        select(models.BigBangConfig)
+        .where(models.BigBangConfig.big_bang_id == multiverse.big_bang_id)
+        .order_by(models.BigBangConfig.version.desc())
+        .limit(1)
+    )
+    branch_policy = (config.branch_policy or {}) if config else {}
+    threshold = branch_policy.get("branch_score_threshold", settings.branch_score_threshold)
+    return float(threshold if threshold is not None else settings.branch_score_threshold)
 
 
 def _normalize_tool_calls(raw_tool_calls, multiverse_id, tick_index: int) -> list[dict]:
@@ -110,18 +132,7 @@ def _normalize_tool_calls(raw_tool_calls, multiverse_id, tick_index: int) -> lis
 
 
 def _canonical_tool_name(tool_name: str) -> str:
-    aliases = {
-        "process_events": "continue_timeline",
-        "process_event": "continue_timeline",
-        "update_state": "continue_timeline",
-        "simulate_tick": "continue_timeline",
-        "branch": "create_branch",
-        "create_multiverse_branch": "create_branch",
-        "continue": "continue_timeline",
-        "terminate": "terminate_timeline",
-        "freeze": "freeze_timeline",
-    }
-    return aliases.get(tool_name.strip(), tool_name.strip())
+    return tool_name.strip()
 
 
 def _attach_candidate_ids(tool_calls: list[dict], provisional_bundle: dict) -> list[dict]:

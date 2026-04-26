@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.schemas import BigBangCreate, BigBangOut, BigBangPatch, ReportRequest, RunUntilCompleteRequest
-from app.api.utils import commit_or_500, require
+from app.api.schemas import BigBangCreate, BigBangOut, BigBangPatch, ReportRequest, ReportVersionOut, RunUntilCompleteOut, RunUntilCompleteRequest
+from app.api.utils import commit_or_500, raise_llm_unavailable, require
 from app.db import models
 from app.db.session import get_db
+from app.llm.audit import LLMCallError
 from app.simulation.initializer import create_big_bang
 from app.simulation.report_engine import generate_final_big_bang_report
 from app.simulation.run_orchestrator import run_big_bang_until_complete
+from app.simulation.tick_runner import TERMINAL_MULTIVERSE_STATUSES
 
 router = APIRouter(prefix="/big-bangs", tags=["big-bangs"])
 
@@ -24,7 +26,11 @@ def list_big_bangs(db: Session = Depends(get_db)):
 
 @router.post("", response_model=BigBangOut, status_code=201)
 def create(payload: BigBangCreate, db: Session = Depends(get_db)):
-    big_bang = create_big_bang(db, payload)
+    try:
+        big_bang = create_big_bang(db, payload)
+    except LLMCallError as exc:
+        db.rollback()
+        raise_llm_unavailable(exc)
     commit_or_500(db)
     return big_bang
 
@@ -73,17 +79,46 @@ def reports(big_bang_id: UUID, db: Session = Depends(get_db)):
     return db.scalars(select(models.Report).where(models.Report.big_bang_id == big_bang_id)).all()
 
 
-@router.post("/{big_bang_id}/reports/final")
-def final_report(big_bang_id: UUID, payload: ReportRequest, db: Session = Depends(get_db)):
+@router.post("/{big_bang_id}/reports/final", response_model=ReportVersionOut)
+def final_report(big_bang_id: UUID, payload: ReportRequest | None = None, db: Session = Depends(get_db)):
+    request = payload or ReportRequest()
     big_bang = require(db, models.BigBang, big_bang_id)
-    version = generate_final_big_bang_report(db, big_bang=big_bang, title=payload.title, summary=payload.summary)
+    reject_non_terminal_multiverses(db, big_bang)
+    version = generate_final_big_bang_report(db, big_bang=big_bang, title=request.title, summary=request.summary)
     commit_or_500(db)
     return version
 
 
-@router.post("/{big_bang_id}/run-until-complete")
-def run_until_complete(big_bang_id: UUID, payload: RunUntilCompleteRequest, db: Session = Depends(get_db)):
+@router.post("/{big_bang_id}/run-until-complete", response_model=RunUntilCompleteOut)
+def run_until_complete(big_bang_id: UUID, payload: RunUntilCompleteRequest | None = None, db: Session = Depends(get_db)):
+    request = payload or RunUntilCompleteRequest()
     big_bang = require(db, models.BigBang, big_bang_id)
-    result = run_big_bang_until_complete(db, big_bang=big_bang, max_total_ticks=payload.max_total_ticks)
+    try:
+        result = run_big_bang_until_complete(db, big_bang=big_bang, max_total_ticks=request.max_total_ticks)
+    except LLMCallError as exc:
+        db.rollback()
+        raise_llm_unavailable(exc)
+    except ValueError as exc:
+        db.rollback()
+        raise_domain_conflict(exc)
     commit_or_500(db)
     return result
+
+
+def reject_non_terminal_multiverses(db: Session, big_bang: models.BigBang) -> None:
+    non_terminal = db.scalars(
+        select(models.Multiverse)
+        .where(
+            models.Multiverse.big_bang_id == big_bang.id,
+            models.Multiverse.status.notin_(TERMINAL_MULTIVERSE_STATUSES),
+        )
+        .order_by(models.Multiverse.ui_label)
+    ).all()
+    if non_terminal:
+        labels = ", ".join(item.ui_label for item in non_terminal[:5])
+        suffix = f": {labels}" if labels else ""
+        raise_domain_conflict(ValueError(f"final report requires terminal multiverses{suffix}"))
+
+
+def raise_domain_conflict(exc: ValueError):
+    raise HTTPException(status_code=409, detail=str(exc) or "request conflicts with simulation state") from exc

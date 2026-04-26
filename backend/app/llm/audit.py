@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import time
 from typing import Any
 
@@ -11,32 +10,88 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db import models
 from app.llm.openrouter_provider import OpenRouterProvider
-from app.llm.provider import DeterministicLLMProvider, LLMProvider
+from app.llm.provider import DeterministicLLMProvider, LLMProvider, LLMProviderUnavailable
 from app.llm.redaction import redact_payload
 from app.llm.schemas import LLMRequest, LLMResponse
 from app.storage.artifact_store import ArtifactStore
 
 
+class LLMCallError(RuntimeError):
+    def __init__(self, message: str, *, call_id: Any | None = None):
+        super().__init__(message)
+        self.call_id = call_id
+
+
+class LLMJSONParseError(ValueError):
+    pass
+
+
 def provider_for_settings() -> LLMProvider:
     settings = get_settings()
-    if settings.default_llm_provider == "openrouter" and settings.openrouter_api_key:
+    provider_name = settings.default_llm_provider.strip().lower()
+    if provider_name == "openrouter":
         return OpenRouterProvider()
-    return DeterministicLLMProvider()
+    if provider_name == "deterministic":
+        return DeterministicLLMProvider()
+    raise RuntimeError(f"Unsupported LLM provider: {settings.default_llm_provider}")
 
 
 def parse_json_object(content: str) -> dict[str, Any]:
     try:
         parsed = json.loads(content)
-        return parsed if isinstance(parsed, dict) else {"value": parsed}
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        if not match:
-            return {"text": content}
+    except json.JSONDecodeError as exc:
+        first_error = exc
+    else:
+        if isinstance(parsed, dict):
+            return parsed
+        raise LLMJSONParseError("LLM response JSON was not an object")
+
+    stripped = content.strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        fenced = stripped.removeprefix("```").removesuffix("```").strip()
+        if fenced.lower().startswith("json"):
+            fenced = fenced[4:].strip()
         try:
-            parsed = json.loads(match.group(0))
-            return parsed if isinstance(parsed, dict) else {"value": parsed}
+            parsed = json.loads(fenced)
         except json.JSONDecodeError:
-            return {"text": content}
+            pass
+        else:
+            if isinstance(parsed, dict):
+                return parsed
+            raise LLMJSONParseError("LLM response JSON was not an object")
+    raise LLMJSONParseError(
+        f"LLM response did not contain a valid JSON object: {first_error}"
+    ) from first_error
+
+
+def ensure_response_json_object(response: LLMResponse) -> dict[str, Any]:
+    if isinstance(response.parsed, dict):
+        return response.parsed
+    if response.parsed is not None:
+        raise LLMJSONParseError("LLM response JSON was not an object")
+    return parse_json_object(response.content)
+
+
+def _json_repair_messages(messages: list[dict[str, str]], error_message: str) -> list[dict[str, str]]:
+    return [
+        *messages,
+        {
+            "role": "user",
+            "content": (
+                "Your previous response was invalid for WorldFork's machine parser: "
+                f"{error_message}. Return exactly one JSON object and nothing else. "
+                "Do not return a JSON array, markdown, prose, comments, or multiple objects."
+            ),
+        },
+    ]
+
+
+def _failure_response(message: str) -> LLMResponse:
+    return LLMResponse(
+        content=json.dumps({"error": message, "fallback": True}),
+        parsed={"error": message, "fallback": True},
+        raw={"error": message},
+    )
 
 
 def complete_with_audit(
@@ -90,6 +145,7 @@ def complete_with_audit(
     response: LLMResponse | None = None
     last_error: Exception | None = None
     max_retries = max(1, settings.llm_max_retries)
+    attempt_messages = messages
     for attempt in range(1, max_retries + 1):
         try:
             response = asyncio.run(
@@ -97,7 +153,7 @@ def complete_with_audit(
                     LLMRequest(
                         purpose=purpose,
                         model=model,
-                        messages=messages,
+                        messages=attempt_messages,
                         json_schema=json_schema,
                         metadata=metadata,
                     )
@@ -105,18 +161,29 @@ def complete_with_audit(
             )
             if not response.content and not response.parsed:
                 raise RuntimeError("LLM response was empty")
+            response.parsed = ensure_response_json_object(response)
             attempts.append({"attempt": attempt, "status": "succeeded"})
             break
         except Exception as exc:
             last_error = exc
-            attempts.append({"attempt": attempt, "status": "failed", "error": str(exc)})
+            response = None
+            error_message = "LLM unavailable" if isinstance(exc, LLMProviderUnavailable) else str(exc)
+            attempts.append({"attempt": attempt, "status": "failed", "error": error_message})
             if attempt < max_retries:
+                if isinstance(exc, LLMJSONParseError):
+                    attempt_messages = _json_repair_messages(messages, error_message)
                 time.sleep(settings.llm_retry_backoff_seconds * attempt)
     try:
         if response is None:
+            if isinstance(last_error, LLMProviderUnavailable):
+                raise last_error
             raise RuntimeError(str(last_error) if last_error else "LLM call failed")
-        response.parsed = response.parsed or parse_json_object(response.content)
-        response_payload = {"content": response.content, "parsed": response.parsed, "raw": response.raw}
+        response.parsed = ensure_response_json_object(response)
+        response_payload = {
+            "content": response.content,
+            "parsed": response.parsed,
+            "raw": response.raw,
+        }
         response_artifact = store.write_json(
             db,
             big_bang_id=big_bang_id,
@@ -142,11 +209,8 @@ def complete_with_audit(
         db.flush()
         return response, call
     except Exception as exc:
-        fallback = LLMResponse(
-            content=json.dumps({"error": str(exc), "fallback": True}),
-            parsed={"error": str(exc), "fallback": True},
-            raw={"error": str(exc)},
-        )
+        error_message = "LLM unavailable" if isinstance(exc, LLMProviderUnavailable) else str(exc)
+        fallback = _failure_response(error_message)
         response_artifact = store.write_json(
             db,
             big_bang_id=big_bang_id,
@@ -156,6 +220,6 @@ def complete_with_audit(
         )
         call.status = "failed"
         call.response_artifact_id = response_artifact.id
-        call.meta = {**call.meta, "error": str(exc), "attempts": attempts}
+        call.meta = {**call.meta, "error": error_message, "attempts": attempts}
         db.flush()
-        return fallback, call
+        raise LLMCallError(error_message, call_id=call.id) from exc
