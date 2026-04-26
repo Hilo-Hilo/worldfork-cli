@@ -1,49 +1,17 @@
 {
-  "version": "1.0.0",
-  "scale": {"min": 0, "max": 1},
-  "note": "WorldFork may categorize high-risk escalation but must not generate operational or tactical guidance for real-world violence or unlawful activity (PRD §3 non-goal #8, §8.6).",
-  "bands": [
+  "scale": [
     {
-      "range": [0.00, 0.10],
-      "key": "negligent_unaware",
-      "label": "Negligent / Unaware",
-      "meaning": "Barely aware of the issue. No public voice, no engagement, no measurable behavioral change."
+      "label": "silent",
+      "value": 0
     },
     {
-      "range": [0.10, 0.25],
-      "key": "silent_observer",
-      "label": "Silent Observer",
-      "meaning": "Aware of the issue and follows it passively, but does not post, comment, or speak about it in public-facing channels."
+      "label": "moderate",
+      "value": 5
     },
     {
-      "range": [0.25, 0.40],
-      "key": "low_level_discussant",
-      "label": "Low-Level Discussant",
-      "meaning": "Occasional low-cost engagement: likes, brief replies, private group conversation. Does not initiate threads."
-    },
-    {
-      "range": [0.40, 0.60],
-      "key": "active_speaker",
-      "label": "Active Speaker",
-      "meaning": "Posts, argues, shares, and defends positions publicly. Generates content others react to."
-    },
-    {
-      "range": [0.60, 0.75],
-      "key": "advocate",
-      "label": "Advocate",
-      "meaning": "Consistently persuades others, sustains arguments across days, recruits sympathizers, and produces durable pieces (essays, threads, videos)."
-    },
-    {
-      "range": [0.75, 0.90],
-      "key": "organizer",
-      "label": "Organizer",
-      "meaning": "Coordinates public or offline action: rallies, petitions, calls, walkouts, fundraising. Carries logistical and reputational responsibility."
-    },
-    {
-      "range": [0.90, 1.00],
-      "key": "high_risk_escalator",
-      "label": "High-Risk Escalator",
-      "meaning": "Engages in disruptive or high-risk public-action categories (e.g. blockades, civil disobedience, confrontational direct action). Categorize only; do NOT produce tactical or operational instructions."
+      "label": "extreme",
+      "value": 10
     }
-  ]
+  ],
+  "version": "v1"
 }

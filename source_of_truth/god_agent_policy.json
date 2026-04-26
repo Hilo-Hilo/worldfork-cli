@@ -1,0 +1,9 @@
+{
+  "rules": [
+    "Only God Agent may authorize branches.",
+    "Only branch engine may persist branches.",
+    "Historical ticks are immutable.",
+    "Emotion observability is not prompt feedback."
+  ],
+  "version": "v1"
+}

@@ -1,0 +1,14 @@
+{
+  "models": [
+    "bounded_confidence",
+    "threshold_mobilization",
+    "opinion_drift",
+    "public_silence",
+    "mobilization",
+    "homophily",
+    "complex_contagion",
+    "social_identity",
+    "attention_decay"
+  ],
+  "version": "v1"
+}

@@ -1,0 +1,9 @@
+{
+  "presets": [
+    {
+      "description": "Default V1 deterministic model weights.",
+      "name": "balanced"
+    }
+  ],
+  "version": "v1"
+}

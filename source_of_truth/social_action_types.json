@@ -1,0 +1,12 @@
+{
+  "action_types": [
+    "post",
+    "reply",
+    "share",
+    "like",
+    "report",
+    "organize",
+    "boycott"
+  ],
+  "version": "v1"
+}

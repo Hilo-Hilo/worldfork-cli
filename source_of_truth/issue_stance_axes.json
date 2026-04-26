@@ -1,35 +1,9 @@
 {
-  "version": "1.0.0",
-  "scenario_axes_extensible": true,
-  "note": "default_axes ships a single generic primary issue stance. The Big Bang initializer is expected to extend this with scenario-specific axes (e.g. 'gig_worker_classification_stance', 'rent_control_stance'). All extension axes must follow the same schema.",
-  "default_axes": [
-    {
-      "key": "primary_issue",
-      "label": "Primary Issue Stance",
-      "range": [-1, 1],
-      "negative_label": "Strong oppose",
-      "positive_label": "Strong support",
-      "anchors": {
-        "-1": "Maximally opposed; treats the proposal as illegitimate and resists by every available means.",
-        "-0.5": "Clearly opposed; argues against publicly and supports counter-mobilization.",
-        "0": "Neutral or undecided; holds no firm position and may be persuaded either way.",
-        "0.5": "Clearly supportive; argues in favor publicly and contributes to mobilization.",
-        "1": "Maximally supportive; treats the proposal as a moral imperative and acts accordingly."
-      }
-    }
+  "axes": [
+    "support",
+    "oppose",
+    "uncertain",
+    "silent"
   ],
-  "extension_schema": {
-    "key": "snake_case unique within the run",
-    "label": "human-readable",
-    "range": [-1, 1],
-    "negative_label": "string",
-    "positive_label": "string",
-    "anchors": {
-      "-1": "string",
-      "-0.5": "string",
-      "0": "string",
-      "0.5": "string",
-      "1": "string"
-    }
-  }
+  "version": "v1"
 }

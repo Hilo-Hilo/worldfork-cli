@@ -1,18 +1,28 @@
-"""Clock helpers — timezone-aware UTC datetimes, freezable for tests."""
-from __future__ import annotations
-
-import os
-from datetime import UTC, datetime
+from dataclasses import dataclass
 
 
-def now_utc() -> datetime:
-    """Return the current UTC datetime (timezone-aware).
+@dataclass(frozen=True)
+class ClockContext:
+    tick_index: int
+    tick_duration: str
+    elapsed_since_big_bang: str
+    elapsed_since_previous_tick: str
 
-    In tests, set the environment variable ``FREEZE_TIME`` to an ISO-8601
-    string (e.g. ``2024-01-01T00:00:00Z``) to pin the clock. The
-    ``freezegun`` library provides a more ergonomic alternative.
-    """
-    freeze_raw = os.environ.get("FREEZE_TIME")
-    if freeze_raw:
-        return datetime.fromisoformat(freeze_raw.replace("Z", "+00:00"))
-    return datetime.now(UTC)
+    def as_prompt_text(self) -> str:
+        return (
+            f"Current tick: T{self.tick_index}\n"
+            f"Tick duration: {self.tick_duration}\n"
+            f"Elapsed since Big Bang: {self.elapsed_since_big_bang}\n"
+            f"Elapsed since previous tick: {self.elapsed_since_previous_tick}"
+        )
+
+
+def build_clock_context(tick_index: int, tick_duration: str) -> ClockContext:
+    elapsed = f"{tick_index} * {tick_duration}"
+    previous = tick_duration if tick_index > 0 else "0"
+    return ClockContext(
+        tick_index=tick_index,
+        tick_duration=tick_duration,
+        elapsed_since_big_bang=elapsed,
+        elapsed_since_previous_tick=previous,
+    )

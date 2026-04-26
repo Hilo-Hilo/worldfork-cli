@@ -1,6 +1,4 @@
-"""Application settings loaded from environment variables / .env file."""
-from __future__ import annotations
-
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field
@@ -10,57 +8,38 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # LLM provider keys
-    openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
-    zep_enabled: bool = Field(default=False, alias="ZEP_ENABLED")
-    zep_api_key: str = Field(default="", alias="ZEP_API_KEY")
-
-    # Database
-    database_url: str = Field(
-        default="postgresql+asyncpg://worldfork:worldfork@localhost:5433/worldfork",
-        alias="DATABASE_URL",
-    )
-    database_url_sync: str = Field(
-        default="postgresql+psycopg://worldfork:worldfork@localhost:5433/worldfork",
-        alias="DATABASE_URL_SYNC",
-    )
-
-    # Redis / Celery
-    redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
-    celery_broker_url: str = Field(
-        default="redis://localhost:6379/1", alias="CELERY_BROKER_URL"
-    )
-    celery_result_backend: str = Field(
-        default="redis://localhost:6379/2", alias="CELERY_RESULT_BACKEND"
-    )
-
-    # Run ledger
-    run_root: Path = Field(default=Path("/data/runs"), alias="RUN_ROOT")
-
-    # Provider defaults
-    default_model: str = Field(default="deepseek/deepseek-v3.2", alias="DEFAULT_MODEL")
-    fallback_model: str = Field(default="openai/gpt-4o-mini", alias="FALLBACK_MODEL")
-    openrouter_base_url: str = Field(
-        default="https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL"
-    )
-    openrouter_http_referer: str = Field(
-        default="http://localhost:3003", alias="OPENROUTER_HTTP_REFERER"
-    )
-    openrouter_title: str = Field(default="WorldFork", alias="OPENROUTER_TITLE")
-
-    # CORS / Next.js
-    next_origin: str = Field(default="http://localhost:3003", alias="NEXT_ORIGIN")
-    next_public_api_url: str = Field(
-        default="http://localhost:8003", alias="NEXT_PUBLIC_API_URL"
-    )
-    next_public_ws_url: str = Field(
-        default="ws://localhost:8003", alias="NEXT_PUBLIC_WS_URL"
-    )
-
-    # Misc
-    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
-    environment: str = Field(default="development", alias="ENVIRONMENT")
+    database_url: str = "postgresql+psycopg://worldfork:worldfork@localhost:5432/worldfork"
+    artifact_root: Path = Path("../artifacts")
+    source_of_truth_dir: Path = Path("../source_of_truth")
+    auto_create_tables: bool = False
+    default_llm_provider: str = "openrouter"
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_chat_completions_url: str = "https://openrouter.ai/api/v1/chat/completions"
+    redis_url: str = "redis://localhost:6379/0"
+    default_model: str = "google/gemini-3.1-flash-lite-preview"
+    initializer_agent_model: str = "google/gemini-3.1-flash-lite-preview"
+    god_agent_model: str = "google/gemini-3.1-flash-lite-preview"
+    cohort_agent_model: str = "google/gemini-3.1-flash-lite-preview"
+    hero_agent_model: str = "google/gemini-3.1-flash-lite-preview"
+    event_summary_model: str = "google/gemini-3.1-flash-lite-preview"
+    report_agent_model: str = "google/gemini-3.1-flash-lite-preview"
+    app_name: str = "WorldFork Backend"
+    api_prefix: str = "/api"
+    default_tick_duration: str = "1 day"
+    default_max_ticks: int = 12
+    default_max_branch_depth: int = 3
+    default_max_active_multiverses: int = 12
+    default_max_branches_per_tick: int = 2
+    branch_score_threshold: float = 0.7
+    initializer_direct_context_char_budget: int = 18000
+    initializer_chunk_chars: int = 12000
+    initializer_chunk_overlap_chars: int = 800
+    llm_max_retries: int = 3
+    llm_retry_backoff_seconds: float = 1.5
+    cors_origins: list[str] = Field(default_factory=list)
 
 
-# Module-level singleton — import this everywhere
-settings = Settings()
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

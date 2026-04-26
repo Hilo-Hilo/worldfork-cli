@@ -1,135 +1,69 @@
-"""WorldFork FastAPI application factory."""
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from sqlalchemy import text
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-from backend.app.core.config import settings
-from backend.app.core.logging import configure_logging
+from app.api import actors, artifacts, big_bangs, case_studies, emotion_observability, frontend, god_agent, graphs, initialization, jobs, multiverses, sample, scenario_bank, settings, sociology, ticks, workspace
+from app.core.config import get_settings
+from app.db.models import Base
+from app.db.session import engine
 
+settings_obj = get_settings()
+app = FastAPI(title=settings_obj.app_name)
+repo_root = Path(__file__).resolve().parents[2]
+frontend_root = repo_root / "frontend"
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    configure_logging()
-    try:
-        from backend.app.providers import ensure_providers_in_loop
-
-        await ensure_providers_in_loop(settings)
-    except Exception:
-        # Provider health is surfaced through /readyz and provider test endpoints.
-        pass
-    yield
-
-
-def create_app() -> FastAPI:
-    app = FastAPI(
-        title="WorldFork API",
-        version="0.1.0",
-        lifespan=lifespan,
-    )
-
+if settings_obj.cors_origins:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.next_origin],
+        allow_origins=settings_obj.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    @app.get("/healthz", tags=["health"])
-    async def healthz() -> dict:
-        return {"ok": True}
 
-    @app.get("/readyz", tags=["health"], response_model=None)
-    async def readyz():
-        """Readiness probe for core runtime dependencies."""
-        checks: dict[str, dict] = {}
-
-        try:
-            from backend.app.core.db import engine
-
-            async with engine.connect() as conn:
-                await conn.execute(text("SELECT 1"))
-            checks["database"] = {"ok": True}
-        except Exception as exc:
-            checks["database"] = {"ok": False, "error": str(exc)}
-
-        try:
-            from backend.app.core.redis_client import get_redis_client
-
-            await get_redis_client().ping()
-            checks["redis"] = {"ok": True}
-        except Exception as exc:
-            checks["redis"] = {"ok": False, "error": str(exc)}
-
-        try:
-            from backend.app.providers import get_provider
-
-            provider = get_provider("openrouter")
-            health = await asyncio.wait_for(provider.healthcheck(), timeout=5)
-            payload = health.model_dump() if hasattr(health, "model_dump") else dict(health)
-            checks["openrouter"] = {
-                "ok": bool(payload.get("ok", False)),
-                "configured": True,
-                "model": payload.get("model"),
-                "error": payload.get("error"),
-            }
-        except Exception as exc:
-            checks["openrouter"] = {
-                "ok": False,
-                "configured": bool(settings.openrouter_api_key),
-                "error": str(exc),
-            }
-
-        checks["zep"] = {"ok": True, "enabled": settings.zep_enabled}
-
-        payload = {
-            "ok": all(c.get("ok", False) for c in checks.values()),
-            "environment": settings.environment,
-            "default_model": settings.default_model,
-            "checks": checks,
-        }
-        if not payload["ok"]:
-            return JSONResponse(status_code=503, content=payload)
-        return payload
-
-    # Mount observability router (/metrics)
-    from backend.app.observability.router import router as metrics_router
-    app.include_router(metrics_router)
-
-    # Mount integrations router (/api/integrations/...)
-    from backend.app.api.integrations import router as integrations_router
-    from backend.app.api.integrations import webhooks_router
-    app.include_router(integrations_router)
-    app.include_router(webhooks_router)
-
-    # Mount WebSocket router (/ws/...)
-    from backend.app.api.websockets import router as ws_router
-    app.include_router(ws_router)
-
-    # Mount B5-A routers — runs, universes, multiverse
-    from backend.app.api.multiverse import router as multiverse_router
-    from backend.app.api.runs import router as runs_router
-    from backend.app.api.universes import router as universes_router
-    app.include_router(runs_router)
-    app.include_router(universes_router)
-    app.include_router(multiverse_router)
-
-    # Mount B5-B routers — settings, jobs, logs
-    from backend.app.api.jobs import router as jobs_router
-    from backend.app.api.logs import router as logs_router
-    from backend.app.api.settings import router as settings_router
-    app.include_router(settings_router)
-    app.include_router(jobs_router)
-    app.include_router(logs_router)
-
-    return app
+@app.on_event("startup")
+def startup() -> None:
+    if settings_obj.auto_create_tables:
+        Base.metadata.create_all(bind=engine)
 
 
-app = create_app()
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/")
+def frontend_index():
+    index_path = frontend_root / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    return {"status": "frontend not built"}
+
+
+prefix = settings_obj.api_prefix
+app.include_router(big_bangs.router, prefix=prefix)
+app.include_router(frontend.router, prefix=prefix)
+app.include_router(workspace.router, prefix=prefix)
+app.include_router(multiverses.router, prefix=prefix)
+app.include_router(ticks.router, prefix=prefix)
+app.include_router(actors.router, prefix=prefix)
+app.include_router(graphs.router, prefix=prefix)
+app.include_router(emotion_observability.router, prefix=prefix)
+app.include_router(sociology.router, prefix=prefix)
+app.include_router(god_agent.router, prefix=prefix)
+app.include_router(settings.router, prefix=prefix)
+app.include_router(jobs.router, prefix=prefix)
+app.include_router(artifacts.router, prefix=prefix)
+app.include_router(sample.router, prefix=prefix)
+app.include_router(initialization.router, prefix=prefix)
+app.include_router(case_studies.router, prefix=prefix)
+app.include_router(scenario_bank.router, prefix=prefix)
+
+if frontend_root.exists():
+    app.mount("/static", StaticFiles(directory=frontend_root), name="static")

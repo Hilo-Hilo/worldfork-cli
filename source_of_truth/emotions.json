@@ -1,150 +1,20 @@
 {
-  "version": "1.0.0",
-  "scale": {"min": 0, "max": 10},
-  "items": [
-    {
-      "key": "anger",
-      "label": "Anger / Outrage",
-      "definition": "Hot affect produced by perceived violation, injustice, betrayal, or attack on self, ingroup, or core values. Mobilizes confrontation, public denunciation, and protest behavior.",
-      "anchors": {
-        "0": "No anger; accepts or ignores the issue without irritation.",
-        "3": "Mild irritation or grumbling complaint; would tell a friend but not post.",
-        "5": "Clear anger and explicit criticism; willing to speak publicly and challenge.",
-        "8": "Strong outrage with confrontational language and demands for accountability.",
-        "10": "Extreme outrage; affect is highly escalatory and crowds out other reasoning."
-      }
-    },
-    {
-      "key": "fear",
-      "label": "Fear / Threat Perception",
-      "definition": "Anticipatory anxiety about personal, family, or in-group harm, including economic, legal, physical, or status threat. Drives avoidance, withdrawal, and protective coordination.",
-      "anchors": {
-        "0": "No sense of threat; situation feels safe and bounded.",
-        "3": "Background unease; checks news more often, hedges plans.",
-        "5": "Clear worry; takes concrete precautions and discusses with trusted contacts.",
-        "8": "Acute fear; reorganizes daily routines, may stockpile or self-isolate.",
-        "10": "Panic-level fear; behavior dominated by avoidance and threat scanning."
-      }
-    },
-    {
-      "key": "distrust",
-      "label": "Distrust",
-      "definition": "Default skepticism toward an actor, institution, or information source; reduces persuasive weight of their statements regardless of content.",
-      "anchors": {
-        "0": "Full default credit extended; assumes good faith.",
-        "3": "Mild skepticism; verifies before sharing.",
-        "5": "Clear distrust; assumes motivated framing and discounts heavily.",
-        "8": "Strong distrust; assumes deception or capture by hostile interests.",
-        "10": "Total distrust; treats all statements as adversarial signaling."
-      }
-    },
-    {
-      "key": "trust",
-      "label": "Trust",
-      "definition": "Default willingness to extend credit to an actor, institution, or information source; raises persuasive weight of their statements and lowers verification cost.",
-      "anchors": {
-        "0": "No trust extended; treats source as adversarial.",
-        "3": "Limited trust; accepts narrow factual claims, doubts framing.",
-        "5": "General trust; accepts most claims with normal verification.",
-        "8": "Strong trust; accepts framing and recommendations with little independent check.",
-        "10": "Unconditional trust; defers fully to the source's interpretation."
-      }
-    },
-    {
-      "key": "hope",
-      "label": "Hope",
-      "definition": "Forward-looking belief that conditions can improve and that one's actions or those of allies can affect outcomes. Sustains engagement against setbacks.",
-      "anchors": {
-        "0": "No hope; outcome is fixed and bad.",
-        "3": "Faint hope; concedes change is possible but unlikely.",
-        "5": "Active hope; believes meaningful progress is realistic with effort.",
-        "8": "Strong hope; expects significant positive change and recruits others.",
-        "10": "Exuberant hope; conviction that breakthrough is imminent."
-      }
-    },
-    {
-      "key": "calm",
-      "label": "Calm",
-      "definition": "Regulated, low-arousal affect that allows analytical engagement, patience, and de-escalation. Inverse of emotional flooding.",
-      "anchors": {
-        "0": "No calm; flooded by other strong affect.",
-        "3": "Mostly agitated but with brief composed moments.",
-        "5": "Generally composed; can deliberate without reactivity.",
-        "8": "Steady and grounded; visibly de-escalates others.",
-        "10": "Deeply settled; unshakable composure under pressure."
-      }
-    },
-    {
-      "key": "confusion",
-      "label": "Confusion",
-      "definition": "Subjective uncertainty about what is happening, who to believe, or what to do. Suppresses confident action and increases search behavior.",
-      "anchors": {
-        "0": "Situation is fully legible; high subjective clarity.",
-        "3": "Some open questions; broadly understands the picture.",
-        "5": "Clear confusion; conflicting accounts make action choice hard.",
-        "8": "Strong confusion; cannot evaluate basic claims or sources.",
-        "10": "Total disorientation; gives up evaluating and defers to in-group cues."
-      }
-    },
-    {
-      "key": "urgency",
-      "label": "Urgency",
-      "definition": "Felt pressure that action must happen soon. Compresses deliberation windows and biases toward immediate posting, mobilization, or scheduling.",
-      "anchors": {
-        "0": "No urgency; treats issue as distant or chronic.",
-        "3": "Mild urgency; intends to act this week.",
-        "5": "Clear urgency; expects to act within days, sets reminders.",
-        "8": "Strong urgency; rearranges schedule today to act.",
-        "10": "Extreme urgency; drops other commitments to act now."
-      }
-    },
-    {
-      "key": "sympathy",
-      "label": "Sympathy",
-      "definition": "Concern-oriented affect toward identifiable victims or affected parties; raises willingness to support, donate, share, or absorb cost on their behalf.",
-      "anchors": {
-        "0": "No sympathy registered.",
-        "3": "Mild concern; acknowledges harm but does not act.",
-        "5": "Clear sympathy; shares stories, signals support.",
-        "8": "Strong sympathy; volunteers time, donates, advocates publicly.",
-        "10": "Profound sympathy; reorients personal priorities around the affected."
-      }
-    },
-    {
-      "key": "disgust",
-      "label": "Disgust",
-      "definition": "Moral or visceral rejection of an actor, behavior, or symbol perceived as contaminating or violating sacred norms. Drives boycott, exclusion, and severance.",
-      "anchors": {
-        "0": "No disgust; behavior is acceptable or neutral.",
-        "3": "Mild distaste; would prefer to avoid.",
-        "5": "Clear disgust; refuses association and signals condemnation.",
-        "8": "Strong disgust; calls for exclusion or boycott of associated parties.",
-        "10": "Visceral revulsion; treats target as illegitimate, beyond dialogue."
-      }
-    },
-    {
-      "key": "resentment",
-      "label": "Resentment",
-      "definition": "Slow-burning grievance accumulated over perceived unfair treatment, status loss, or repeated dismissal. Lowers willingness to cooperate even when interests align.",
-      "anchors": {
-        "0": "No held grievance; clean slate.",
-        "3": "Background bitterness; occasional pointed remarks.",
-        "5": "Clear resentment; selectively withholds cooperation, keeps score.",
-        "8": "Strong resentment; actively frustrates the resented party where low-cost.",
-        "10": "Deep, identity-defining resentment; will absorb cost to deny the other a win."
-      }
-    },
-    {
-      "key": "sadness",
-      "label": "Sadness",
-      "definition": "Low-arousal grief or demoralization in response to loss, defeat, or bleak prospects. Reduces public expression and mobilization in the short term.",
-      "anchors": {
-        "0": "No sadness; affect is neutral or positive.",
-        "3": "Mild low mood; less talkative, slower to share.",
-        "5": "Clear sadness; visibly subdued, withdraws from public discussion.",
-        "8": "Strong sadness; demoralized, doubts efficacy of any action.",
-        "10": "Deep grief or despair; effectively unable to mobilize without recovery."
-      }
-    }
-  ]
+  "emotions": [
+    "anger",
+    "fear",
+    "distrust",
+    "trust",
+    "hope",
+    "calm",
+    "sadness",
+    "joy",
+    "confusion",
+    "certainty"
+  ],
+  "scale": {
+    "max": 10,
+    "min": 0,
+    "moderate": 5
+  },
+  "version": "v1"
 }

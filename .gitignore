@@ -1,51 +1,12 @@
-# Secrets
 .env
-.env.local
-.env.*.local
-*.pem
-
-# Python
+backend/.env
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-.venv/
-venv/
-env/
-ENV/
+*.pyc
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-*.egg-info/
-build/
-dist/
-pip-wheel-metadata/
+artifacts/
+backend/.venv/
+.venv/
 
-# Node
-node_modules/
-.next/
-out/
-.pnpm-store/
-.turbo/
-.vercel/
-
-# Editors
-.vscode/
-.idea/
-*.swp
-.DS_Store
-
-# Run ledger (local data)
-/runs/
-/data/
-
-# Logs
-*.log
-/logs/
-/test-results/
-
-# Docker volumes
-/docker-data/
+frontend/.vite/
+frontend/node_modules/
+frontend/dist/
