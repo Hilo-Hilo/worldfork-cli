@@ -35,6 +35,7 @@ def test_parser_builds_and_lists_top_level_commands() -> None:
         "multiverse",
         "universe",
         "cohort",
+        "model",
         "jobs",
         "logs",
     ]
@@ -60,6 +61,11 @@ def test_parser_builds_and_lists_top_level_commands() -> None:
         ["universe", "trace", "UNIID", "1", "--fields", "actor_id,rationale"],
         ["cohort", "transcript", "UNIID", "COHID", "--from-tick", "1", "--to-tick", "3"],
         ["logs", "requests", "--fields", "call_id,latency_ms"],
+        ["model", "list"],
+        ["model", "get", "simulate_universe_tick"],
+        ["model", "set", "google/gemini-3.1-flash-lite-preview"],
+        ["model", "set", "x/y", "--job-type", "initialize_big_bang"],
+        ["model", "set", "x/y", "--fallback", ""],
     ],
 )
 def test_subcommands_parse(argv: list[str]) -> None:

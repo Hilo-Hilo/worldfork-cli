@@ -643,6 +643,134 @@ def cohort_transcript(args: argparse.Namespace, client: WorldForkClient) -> None
 
 
 # ---------------------------------------------------------------------------
+# model (live hot routing swap — no container restart)
+# ---------------------------------------------------------------------------
+
+_ROUTING_PATH = "/settings/model-routing"
+
+
+def _fetch_routing(client: WorldForkClient) -> list[dict[str, Any]]:
+    response = client.request("GET", _ROUTING_PATH)
+    if not isinstance(response, dict):
+        raise RuntimeError(f"unexpected routing response: {type(response).__name__}")
+    entries = response.get("entries")
+    if not isinstance(entries, list):
+        raise RuntimeError("routing response missing 'entries' array")
+    return entries
+
+
+def _routing_row(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "job_type": entry.get("job_type", ""),
+        "preferred_model": entry.get("preferred_model", ""),
+        "fallback_model": entry.get("fallback_model", ""),
+        "timeout_s": entry.get("timeout_seconds", ""),
+    }
+
+
+def model_list(args: argparse.Namespace, client: WorldForkClient) -> None:
+    entries = _fetch_routing(client)
+    if args.json:
+        emit(args, entries)
+        return
+    rows = [_routing_row(e) for e in entries]
+    if not rows:
+        print("(no routing entries)")
+        return
+    print_table(rows, ["job_type", "preferred_model", "fallback_model", "timeout_s"])
+
+
+def model_get(args: argparse.Namespace, client: WorldForkClient) -> None:
+    entries = _fetch_routing(client)
+    match = next((e for e in entries if e.get("job_type") == args.job_type), None)
+    if match is None:
+        raise RuntimeError(
+            f"no routing entry for job_type={args.job_type!r}; "
+            f"available: {sorted(e.get('job_type','') for e in entries)}"
+        )
+    emit(args, match)
+
+
+# Fields the PATCH body accepts per entry. We pass through everything that
+# was on the GET response so unrelated knobs (rate limits, timeouts, budgets)
+# are preserved.
+_ROUTING_PATCH_KEYS = (
+    "job_type",
+    "preferred_provider",
+    "preferred_model",
+    "fallback_provider",
+    "fallback_model",
+    "temperature",
+    "top_p",
+    "max_tokens",
+    "max_concurrency",
+    "requests_per_minute",
+    "tokens_per_minute",
+    "timeout_seconds",
+    "retry_policy",
+    "daily_budget_usd",
+)
+
+
+def _patch_entry(
+    entry: dict[str, Any],
+    new_model: str,
+    new_fallback: str | None,
+    provider: str,
+    fallback_provider: str,
+) -> dict[str, Any]:
+    out = {k: entry.get(k) for k in _ROUTING_PATCH_KEYS if k in entry}
+    out["preferred_provider"] = provider
+    out["preferred_model"] = new_model
+    if new_fallback is not None:
+        out["fallback_provider"] = fallback_provider
+        out["fallback_model"] = new_fallback
+    return out
+
+
+def model_set(args: argparse.Namespace, client: WorldForkClient) -> None:
+    if args.job_type and args.all:
+        raise RuntimeError("--job-type and --all are mutually exclusive")
+
+    entries = _fetch_routing(client)
+    if args.job_type:
+        targets = [e for e in entries if e.get("job_type") == args.job_type]
+        if not targets:
+            raise RuntimeError(
+                f"no routing entry for job_type={args.job_type!r}; "
+                f"available: {sorted(e.get('job_type','') for e in entries)}"
+            )
+    else:
+        targets = entries  # default = all
+
+    # An explicit empty --fallback means "don't touch fallback"; anything else
+    # (including the default) is applied. Lets users override or skip cleanly.
+    fallback_model = args.fallback if args.fallback else None
+    patched = [
+        _patch_entry(
+            e,
+            new_model=args.model,
+            new_fallback=fallback_model,
+            provider=args.provider,
+            fallback_provider=args.fallback_provider,
+        )
+        for e in targets
+    ]
+    response = client.request("PATCH", _ROUTING_PATH, json_body={"entries": patched})
+    if args.json:
+        emit(args, response)
+        return
+    print(
+        f"Updated {len(patched)} routing entr{'y' if len(patched) == 1 else 'ies'} → "
+        f"preferred={args.model}"
+        + (f", fallback={args.fallback}" if args.fallback else "")
+    )
+    if isinstance(response, dict) and isinstance(response.get("entries"), list):
+        rows = [_routing_row(e) for e in response["entries"]]
+        print_table(rows, ["job_type", "preferred_model", "fallback_model", "timeout_s"])
+
+
+# ---------------------------------------------------------------------------
 # logs
 # ---------------------------------------------------------------------------
 

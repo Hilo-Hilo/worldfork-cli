@@ -50,6 +50,10 @@ Top-level keys only — no dotted paths. For deeper projection, pipe `--json` ou
 When given a fresh backend, walk it in this order. Each step uses the smallest payload that answers the question:
 
 ```bash
+# 0. (One-time) Pick the model the simulation should use.
+worldfork model list                           # see what's currently routed
+worldfork model set google/gemini-3.1-flash-lite-preview   # hot-swap, no restart
+
 # 1. Confirm backend is alive and how many runs exist.
 worldfork --verbosity summary status
 
@@ -89,6 +93,30 @@ worldfork universe trace UNI 1 --actor-kind cohort \
 ```
 
 `worldfork cohort transcript` is a higher-level convenience that walks a tick range and stitches one cohort's row across ticks. It's N HTTP calls — one per tick — so bound the range.
+
+## Live hot model swap — `worldfork model`
+
+The backend keeps a per-job-type routing table (preferred + fallback model, timeout, rate limits). It's mutable through `PATCH /api/settings/model-routing` and the worker reads it on every call — **swapping a model takes effect on the next tick, no container restart, no env edit**.
+
+```bash
+worldfork model list                           # see all 14 entries
+worldfork model get simulate_universe_tick     # one entry
+
+# Default scope = every job_type. Default fallback = deepseek/deepseek-v4-pro.
+worldfork model set google/gemini-3.1-flash-lite-preview
+
+# Scope to one job_type, override fallback explicitly.
+worldfork model set anthropic/claude-haiku-4-5 \
+  --job-type god_agent_review \
+  --fallback openai/gpt-4o-mini
+
+# Pass --fallback "" to leave the existing fallback alone.
+worldfork model set google/gemini-3.1-flash-lite-preview --fallback ""
+```
+
+Use this **before** `bigbang run-until-complete` (or any `bigbang start`) so the simulation runs on the model you want without a container roundtrip. Verify with `worldfork --verbosity normal logs requests --run-id <id> --limit 1` — `model_used` will show the resolved slug (often pinned to a date-stamped snapshot).
+
+Knobs not exposed yet (use `worldfork query PATCH /settings/model-routing --data '...'` for now): `temperature`, `top_p`, `max_tokens`, `requests_per_minute`, `tokens_per_minute`, `timeout_seconds`, `daily_budget_usd`.
 
 ## Async vs sync — `bigbang run-until-complete`
 

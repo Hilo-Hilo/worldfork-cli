@@ -74,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_multiverse(sub)
     _add_universe(sub)
     _add_cohort(sub)
+    _add_model(sub)
     _add_jobs(sub)
     _add_logs(sub)
 
@@ -272,6 +273,62 @@ def _add_cohort(sub: argparse._SubParsersAction) -> None:
         help="Comma-separated keys to keep per tick (overrides --verbosity).",
     )
     p.set_defaults(func=commands.cohort_transcript)
+
+
+def _add_model(sub: argparse._SubParsersAction) -> None:
+    """Live, hot model swap. Wraps PATCH /api/settings/model-routing.
+
+    The backend keeps a per-job-type routing table in the DB. Mutating it
+    takes effect on the next worker call — no container restart, no env edit.
+    """
+    mo = sub.add_parser(
+        "model",
+        help="Live model routing (per-job-type preferred + fallback). Hot-swap; no restart.",
+    )
+    s = mo.add_subparsers(dest="model_command", required=True)
+
+    p = s.add_parser("list", help="Show the current routing table for every job_type.")
+    p.set_defaults(func=commands.model_list)
+
+    p = s.add_parser("get", help="Show the routing entry for one job_type.")
+    p.add_argument("job_type")
+    p.set_defaults(func=commands.model_get)
+
+    p = s.add_parser(
+        "set",
+        help=(
+            "Swap the preferred (and optionally fallback) model. "
+            "Default scope: every job_type (--all). Use --job-type to scope to one."
+        ),
+    )
+    p.add_argument("model", help="OpenRouter slug, e.g. google/gemini-3.1-flash-lite-preview")
+    p.add_argument(
+        "--job-type",
+        dest="job_type",
+        help="Scope to one job_type (e.g. simulate_universe_tick). Omit to apply to all.",
+    )
+    p.add_argument("--all", action="store_true", help="Apply to every job_type (default).")
+    p.add_argument(
+        "--fallback",
+        default="deepseek/deepseek-v4-pro",
+        help=(
+            "Fallback model on the same scope "
+            "(default: deepseek/deepseek-v4-pro). "
+            "Pass an empty string to leave the existing fallback untouched."
+        ),
+    )
+    p.add_argument(
+        "--provider",
+        default="openrouter",
+        help="Preferred provider (default: openrouter).",
+    )
+    p.add_argument(
+        "--fallback-provider",
+        dest="fallback_provider",
+        default="openrouter",
+        help="Fallback provider (default: openrouter).",
+    )
+    p.set_defaults(func=commands.model_set)
 
 
 def _add_jobs(sub: argparse._SubParsersAction) -> None:
